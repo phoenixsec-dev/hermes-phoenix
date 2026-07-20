@@ -23,6 +23,16 @@ class StubPhoenix:
                         self._reply(200, {"allowed": False})
                     else:
                         self._reply(401, {"error": "unauthorized", "code": "UNAUTHORIZED"})
+                elif self.path == "/v1/secrets/services/hermes/kit-main/":
+                    self._reply(
+                        200,
+                        {
+                            "paths": [
+                                "services/hermes/kit-main/calendar/password",
+                                "services/hermes/kit-main/storage/token",
+                            ]
+                        },
+                    )
                 elif self.path.startswith("/non-json"):
                     self._raw(200, b"secret-looking response that must not escape", "text/plain")
                 elif self.path.startswith("/secret-error"):
@@ -42,6 +52,30 @@ class StubPhoenix:
                     self.send_response(302)
                     self.send_header("Location", "/redirect-target")
                     self.end_headers()
+                else:
+                    self._reply(404, {"error": "not found"})
+
+            def do_POST(self) -> None:  # noqa: N802
+                content_length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw_body) if raw_body else {}
+                except json.JSONDecodeError:
+                    body = None
+                owner.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
+                if self.path == "/v1/resolve" and isinstance(body, dict):
+                    refs = body.get("refs", [])
+                    values = {
+                        ref: "synthetic-secret-value"
+                        for ref in refs
+                        if ref != "phoenix://services/hermes/kit-main/missing"
+                    }
+                    errors = (
+                        {"phoenix://services/hermes/kit-main/missing": "secret-looking server diagnostic"}
+                        if "phoenix://services/hermes/kit-main/missing" in refs
+                        else {}
+                    )
+                    self._reply(200, {"values": values, "errors": errors})
                 else:
                     self._reply(404, {"error": "not found"})
 

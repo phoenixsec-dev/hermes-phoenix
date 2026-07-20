@@ -25,12 +25,20 @@ class FakeContext:
         self.hooks.append((name, callback))
 
 
-def test_register_exposes_status_first_surfaces(monkeypatch):
+def test_register_exposes_path_b_runtime_surfaces(monkeypatch):
     monkeypatch.setattr(plugin, "status_payload", lambda *_args, **_kwargs: {"ok": True})
     ctx = FakeContext()
     plugin.register(ctx)
-    assert [item["name"] for item in ctx.tools] == ["phoenix_status"]
-    assert [item["toolset"] for item in ctx.tools] == ["phoenix"]
+    assert [item["name"] for item in ctx.tools] == [
+        "phoenix_status",
+        "phoenix_list",
+        "phoenix_resolve",
+    ]
+    assert [item["toolset"] for item in ctx.tools] == [
+        "phoenix",
+        "phoenix_list",
+        "phoenix_resolve",
+    ]
     assert [item["name"] for item in ctx.cli] == ["phoenix"]
     assert [item["name"] for item in ctx.commands] == ["phoenix"]
     assert [name for name, _callback in ctx.hooks] == ["on_session_start"]

@@ -13,7 +13,8 @@ from typing import Any, Mapping
 
 from .config import PluginConfig
 from .errors import ApiError, ConfigurationError, NetworkError
-from .identity import read_runtime_token, validate_private_key_file
+from .identity import fingerprint_runtime_token, read_runtime_token, validate_private_key_file
+from .refs import normalize_list_prefix, normalize_ref
 
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
@@ -47,8 +48,11 @@ class PhoenixClient:
             raise ConfigurationError(
                 "Role-scoped runtime session minting is not implemented in this scaffold",
                 code="PHOENIX_ROLE_NOT_IMPLEMENTED",
-                remediation="Unset role for status-only use; role support will land before runtime secret tools.",
+                remediation="Unset role for direct bootstrap-identity use until role session support lands.",
             )
+        self._identity_fingerprint = (
+            fingerprint_runtime_token(config.token_file) if config.token_file is not None else None
+        )
         self._opener = self._build_opener()
 
     def _build_opener(self) -> urllib.request.OpenerDirector:
@@ -94,6 +98,7 @@ class PhoenixClient:
         caller: CallerContext,
         query: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
+        expected_status: int = 200,
     ) -> Mapping[str, Any]:
         url = f"{self.config.server}{path}"
         if query:
@@ -134,6 +139,17 @@ class PhoenixClient:
             raise ApiError("Phoenix response exceeded the size limit", status=status, code="PHOENIX_RESPONSE_TOO_LARGE")
         if status < 200 or status >= 300:
             raise ApiError(f"Phoenix request failed with HTTP {status}", status=status)
+        if status != expected_status:
+            code = "PHOENIX_APPROVAL_REQUIRED" if status == 202 else "PHOENIX_HTTP_ERROR"
+            message = "Phoenix request requires approval" if status == 202 else f"Phoenix request returned HTTP {status}"
+            raise ApiError(
+                message,
+                status=status,
+                code=code,
+                remediation="Use an operator-approved, non-step-up runtime role for unattended Hermes tool calls."
+                if status == 202
+                else "Check Phoenix server logs and audit records for safe diagnostic detail.",
+            )
         try:
             payload = json.loads(raw.decode("utf-8")) if raw else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -164,6 +180,94 @@ class PhoenixClient:
                 "check": "allow_unseal",
             },
         )
+
+    def list(self, prefix: str | None = None, *, caller: CallerContext) -> dict[str, Any]:
+        normalized_prefix = normalize_list_prefix(prefix, self.config.default_namespace)
+        encoded_prefix = "/".join(
+            urllib.parse.quote(segment, safe="")
+            for segment in normalized_prefix.rstrip("/").split("/")
+            if segment
+        )
+        if encoded_prefix:
+            encoded_prefix += "/"
+        payload = self._request_json(
+            "GET",
+            f"/v1/secrets/{encoded_prefix}",
+            caller=caller,
+        )
+        raw_paths = payload.get("paths")
+        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+            raise ApiError(
+                "Phoenix list response was invalid",
+                status=200,
+                code="PHOENIX_RESPONSE_INVALID",
+            )
+        paths: list[str] = []
+        for path in raw_paths:
+            try:
+                normalized_path = normalize_ref(f"phoenix://{path}")[len("phoenix://") :]
+            except ConfigurationError as exc:
+                raise ApiError(
+                    "Phoenix list response contained an invalid path",
+                    status=200,
+                    code="PHOENIX_RESPONSE_INVALID",
+                ) from exc
+            if normalized_prefix and not normalized_path.startswith(normalized_prefix):
+                raise ApiError(
+                    "Phoenix list response contained a path outside the requested prefix",
+                    status=200,
+                    code="PHOENIX_RESPONSE_INVALID",
+                )
+            paths.append(normalized_path)
+        return {"prefix": normalized_prefix, "paths": paths}
+
+    def resolve(self, refs: list[str], *, caller: CallerContext) -> dict[str, Any]:
+        if self.config.seal_mode:
+            raise ConfigurationError(
+                "Sealed resolve support is not implemented in this phase",
+                code="PHOENIX_SEALED_NOT_IMPLEMENTED",
+                remediation="Keep phoenix_resolve disallowed until the sealed-response phase is installed.",
+            )
+        normalized_refs = [normalize_ref(ref, self.config.default_namespace) for ref in refs]
+        payload = self._request_json(
+            "POST",
+            "/v1/resolve",
+            caller=caller,
+            body={"refs": normalized_refs},
+        )
+        raw_values = payload.get("values", {})
+        raw_errors = payload.get("errors", {})
+        if not isinstance(raw_values, dict) or not isinstance(raw_errors, dict):
+            raise ApiError(
+                "Phoenix resolve response was invalid",
+                status=200,
+                code="PHOENIX_RESPONSE_INVALID",
+            )
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in raw_values.items()):
+            raise ApiError(
+                "Phoenix resolve response contained invalid values",
+                status=200,
+                code="PHOENIX_RESPONSE_INVALID",
+            )
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in raw_errors.items()):
+            raise ApiError(
+                "Phoenix resolve response contained invalid errors",
+                status=200,
+                code="PHOENIX_RESPONSE_INVALID",
+            )
+        requested = set(normalized_refs)
+        value_refs = set(raw_values)
+        error_refs = set(raw_errors)
+        if value_refs & error_refs or value_refs | error_refs != requested:
+            raise ApiError(
+                "Phoenix resolve response did not match the requested refs",
+                status=200,
+                code="PHOENIX_RESPONSE_INVALID",
+            )
+        # Server-controlled error strings are deliberately replaced rather than
+        # copied into a model-visible tool result.
+        errors = {ref: "Phoenix did not resolve this ref." for ref in raw_errors}
+        return {"mode": "plaintext", "values": dict(raw_values), "errors": errors}
 
     def status(self, *, caller: CallerContext) -> dict[str, Any]:
         raw_health = self.health(caller=caller)

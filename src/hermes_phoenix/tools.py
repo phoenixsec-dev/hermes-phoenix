@@ -7,7 +7,10 @@ from typing import Any, Callable
 
 from .client import CallerContext, PhoenixClient
 from .config import PluginConfig
-from .errors import PhoenixPluginError
+from .errors import ConfigurationError, PhoenixPluginError
+
+_MAX_RESOLVE_REFS = 50
+_MAX_ARGUMENT_LENGTH = 1024
 
 PHOENIX_STATUS_SCHEMA: dict[str, Any] = {
     "name": "phoenix_status",
@@ -18,6 +21,43 @@ PHOENIX_STATUS_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": False,
+    },
+}
+
+PHOENIX_LIST_SCHEMA: dict[str, Any] = {
+    "name": "phoenix_list",
+    "description": "List Phoenix secret paths visible under a prefix. Never returns secret values.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "prefix": {
+                "type": "string",
+                "description": "Optional path or phoenix:// prefix; defaults to the profile namespace.",
+                "maxLength": _MAX_ARGUMENT_LENGTH,
+            }
+        },
+        "additionalProperties": False,
+    },
+}
+
+PHOENIX_RESOLVE_SCHEMA: dict[str, Any] = {
+    "name": "phoenix_resolve",
+    "description": (
+        "Resolve one or more Phoenix refs. In the current unsealed phase, returned values are plaintext; "
+        "only explicitly allow this tool for profiles that accept that exposure."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "refs": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": _MAX_ARGUMENT_LENGTH},
+                "minItems": 1,
+                "maxItems": _MAX_RESOLVE_REFS,
+            }
+        },
+        "required": ["refs"],
         "additionalProperties": False,
     },
 }
@@ -52,8 +92,96 @@ def status_payload(config_loader: Callable[[], PluginConfig], **kwargs: Any) -> 
         }
 
 
+def _failure_payload(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, PhoenixPluginError):
+        return {"ok": False, "error": exc.to_payload().as_dict()}
+    return {
+        "ok": False,
+        "error": {
+            "type": "internal_error",
+            "status": 0,
+            "error": "Unexpected Phoenix plugin error",
+            "remediation": "Check the Hermes gateway log for the exception without exposing credentials to the model.",
+        },
+    }
+
+
+def list_payload(
+    config_loader: Callable[[], PluginConfig],
+    args: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    try:
+        if not isinstance(args, dict) or set(args) - {"prefix"}:
+            raise ConfigurationError("phoenix_list accepts only the optional prefix argument")
+        prefix = args.get("prefix")
+        if prefix is not None and (not isinstance(prefix, str) or len(prefix) > _MAX_ARGUMENT_LENGTH):
+            raise ConfigurationError(f"phoenix_list prefix must be a string up to {_MAX_ARGUMENT_LENGTH} characters")
+        config = config_loader()
+        caller = caller_from_kwargs(config.profile_name, tool="phoenix_list", kwargs=kwargs)
+        result = PhoenixClient(config).list(prefix, caller=caller)
+        paths = result["paths"]
+        return {
+            "ok": True,
+            "prefix": result["prefix"],
+            "count": len(paths),
+            "paths": paths,
+        }
+    except Exception as exc:
+        return _failure_payload(exc)
+
+
+def resolve_payload(
+    config_loader: Callable[[], PluginConfig],
+    args: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    try:
+        if not isinstance(args, dict) or set(args) != {"refs"}:
+            raise ConfigurationError("phoenix_resolve requires only the refs argument")
+        refs = args.get("refs")
+        if (
+            not isinstance(refs, list)
+            or not 1 <= len(refs) <= _MAX_RESOLVE_REFS
+            or any(not isinstance(ref, str) or not ref.strip() or len(ref) > _MAX_ARGUMENT_LENGTH for ref in refs)
+        ):
+            raise ConfigurationError(
+                f"phoenix_resolve refs must contain 1 to {_MAX_RESOLVE_REFS} non-empty strings"
+            )
+        config = config_loader()
+        caller = caller_from_kwargs(config.profile_name, tool="phoenix_resolve", kwargs=kwargs)
+        result = PhoenixClient(config).resolve(refs, caller=caller)
+        values = result["values"]
+        errors = result["errors"]
+        return {
+            "ok": not errors,
+            "partial": bool(errors and values),
+            "mode": result["mode"],
+            "values": values,
+            "errors": errors,
+            "requested": len(refs),
+            "resolved": len(values),
+        }
+    except Exception as exc:
+        return _failure_payload(exc)
+
+
 def make_status_handler(config_loader: Callable[[], PluginConfig]):
     def handle(_args: dict[str, Any], **kwargs: Any) -> str:
         return json.dumps(status_payload(config_loader, **kwargs), sort_keys=True)
+
+    return handle
+
+
+def make_list_handler(config_loader: Callable[[], PluginConfig]):
+    def handle(args: dict[str, Any], **kwargs: Any) -> str:
+        return json.dumps(list_payload(config_loader, args, **kwargs), sort_keys=True)
+
+    return handle
+
+
+def make_resolve_handler(config_loader: Callable[[], PluginConfig]):
+    def handle(args: dict[str, Any], **kwargs: Any) -> str:
+        return json.dumps(resolve_payload(config_loader, args, **kwargs), sort_keys=True)
 
     return handle

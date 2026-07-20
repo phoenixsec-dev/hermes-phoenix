@@ -47,6 +47,106 @@ def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_p
     assert result["health"] == {"status": "reachable"}
 
 
+def test_list_returns_only_paths_under_normalized_prefix(stub_phoenix, tmp_path):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    result = client.list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    assert result == {
+        "prefix": "services/hermes/kit-main/",
+        "paths": [
+            "services/hermes/kit-main/calendar/password",
+            "services/hermes/kit-main/storage/token",
+        ],
+    }
+    request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/"))
+    assert request["headers"]["X-Hermes-Tool"] == "phoenix_list"
+
+
+def test_resolve_normalizes_refs_and_hides_server_error_text(stub_phoenix, tmp_path):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    result = client.resolve(
+        ["calendar/password", "missing"],
+        caller=CallerContext(profile="kit-main", tool="phoenix_resolve"),
+    )
+    assert result["mode"] == "plaintext"
+    assert result["values"] == {
+        "phoenix://services/hermes/kit-main/calendar/password": "synthetic-secret-value"
+    }
+    assert result["errors"] == {
+        "phoenix://services/hermes/kit-main/missing": "Phoenix did not resolve this ref."
+    }
+    assert "secret-looking" not in str(result)
+    request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve")
+    assert request["body"]["refs"] == [
+        "phoenix://services/hermes/kit-main/calendar/password",
+        "phoenix://services/hermes/kit-main/missing",
+    ]
+    assert request["headers"]["X-Hermes-Tool"] == "phoenix_resolve"
+
+
+def test_resolve_rejects_response_refs_that_were_not_requested(stub_phoenix, tmp_path, monkeypatch):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    monkeypatch.setattr(
+        client,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "values": {"phoenix://services/hermes/kit-main/other": "must-not-escape"},
+            "errors": {},
+        },
+    )
+    with pytest.raises(ApiError) as caught:
+        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
+    assert "must-not-escape" not in str(caught.value)
+
+
+@pytest.mark.parametrize("paths", ["not-a-list", [123]])
+def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": paths})
+    with pytest.raises(ApiError) as caught:
+        client.list(caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
+
+
+def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monkeypatch):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": ["other/key"]})
+    with pytest.raises(ApiError) as caught:
+        client.list(caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"values": [], "errors": {}},
+        {"values": {"phoenix://services/hermes/kit-main/calendar/password": 123}, "errors": {}},
+        {"values": {}, "errors": []},
+        {"values": {}, "errors": {"phoenix://services/hermes/kit-main/calendar/password": 123}},
+    ],
+)
+def test_resolve_rejects_malformed_value_and_error_maps(stub_phoenix, tmp_path, monkeypatch, payload):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
+    with pytest.raises(ApiError) as caught:
+        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
+
+
+def test_resolve_fails_closed_until_sealed_support_lands(stub_phoenix, tmp_path):
+    config = _config(
+        stub_phoenix,
+        tmp_path,
+        seal_mode=True,
+        seal_key_file=str(tmp_path / "seal.key"),
+    )
+    client = PhoenixClient(config)
+    with pytest.raises(ConfigurationError) as caught:
+        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_SEALED_NOT_IMPLEMENTED"
+    assert not any(item["path"] == "/v1/resolve" for item in stub_phoenix.requests)
+
+
 def test_non_json_error_does_not_include_response_body(stub_phoenix, tmp_path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     with pytest.raises(ApiError) as caught:

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from hermes_phoenix.errors import IdentityError
-from hermes_phoenix.identity import read_runtime_token, validate_private_key_file
+from hermes_phoenix.identity import fingerprint_runtime_token, read_runtime_token, validate_private_key_file
 
 
 def test_reads_owner_only_bootstrap_token(tmp_path):
@@ -13,6 +13,16 @@ def test_reads_owner_only_bootstrap_token(tmp_path):
     path.write_text("bootstrap-token\n")
     path.chmod(0o600)
     assert read_runtime_token(path) == "bootstrap-token"
+
+
+def test_fingerprints_runtime_token_without_returning_material(tmp_path):
+    path = tmp_path / "token"
+    path.write_text("bootstrap-token")
+    path.chmod(0o600)
+    fingerprint = fingerprint_runtime_token(path)
+    assert len(fingerprint) == 64
+    assert fingerprint == fingerprint_runtime_token(path)
+    assert "bootstrap-token" not in fingerprint
 
 
 def test_rejects_broad_permissions(tmp_path):

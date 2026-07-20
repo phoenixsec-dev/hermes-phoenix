@@ -1,6 +1,6 @@
 # hermes-phoenix
 
-Hermes plugin for [Phoenix Secrets Manager](https://github.com/phoenixsec-dev/phoenix). The current status-first foundation provides secure bootstrap-token-file/mTLS client handling, diagnostics, and audited status calls; scoped role sessions, secret tools, and sealed/scrubbed responses are planned follow-up work.
+Hermes plugin for [Phoenix Secrets Manager](https://github.com/phoenixsec-dev/phoenix). The current Path B foundation provides secure bootstrap-token-file/mTLS client handling, diagnostics, audited status/list calls, and an explicitly gated unsealed resolve tool. Scoped role sessions and sealed/scrubbed responses are planned follow-up work.
 
 ## Status
 
@@ -12,9 +12,11 @@ The current foundation includes:
 - strict profile-local configuration parsing
 - bearer-token-file and mTLS client foundations
 - `phoenix_status`, warning-only startup/session preflight, `hermes phoenix status`, and `/phoenix status`
+- `phoenix_list` path discovery and unsealed `phoenix_resolve`
+- fail-closed token-file validation plus internal SHA-256 identity fingerprint groundwork
 - offline tests against a stub Phoenix server
 
-`phoenix_resolve`, `phoenix_list`, sealed responses, value-aware scrub hooks, identity deduplication, SecretSource registration, and `hermes phoenix verify` are not implemented yet.
+Sealed responses, value-aware scrub hooks, cross-profile identity deduplication, role-scoped session minting, SecretSource registration, and `hermes phoenix verify` are not implemented yet.
 
 ## Security posture
 
@@ -50,7 +52,11 @@ plugins:
       timeout_seconds: 10
 ```
 
-Hermes toolsets remain independently allowlisted. Begin with `phoenix_status` only.
+The plugin deliberately separates its rollout gates into three Hermes toolsets: `phoenix` exposes only `phoenix_status`, `phoenix_list` exposes only path discovery, and `phoenix_resolve` exposes only resolution. Begin with `phoenix`; add `phoenix_list` after validating the profile ACL.
+
+### Plaintext resolve warning
+
+`phoenix_resolve` is available for deliberate B3 testing, but this phase is **unsealed**: successful values appear as plaintext in the tool result and its session JSONL entry. Keep the `phoenix_resolve` toolset out of normal profile toolset allowlists until the operator explicitly accepts that exposure or the B4 sealed-response phase is installed. Server-controlled per-ref error text is never copied into tool results.
 
 ## Directory-plugin install
 
@@ -66,7 +72,7 @@ Then add `phoenix` to `plugins.enabled` in that profile's `config.yaml`.
 
 ## Authentication foundations
 
-Supported by the status/preflight client:
+Supported by the status, list, and resolve client:
 
 - scoped bearer in `token_file`
 - mTLS via `ca_cert`, `client_cert`, and `client_key`

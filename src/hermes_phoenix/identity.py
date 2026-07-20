@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 from pathlib import Path
@@ -73,6 +74,12 @@ def read_runtime_token(path: Path) -> str:
             remediation="Configure a durable, profile-scoped bootstrap token file for runtime identity.",
         )
     return token
+
+
+def fingerprint_runtime_token(path: Path) -> str:
+    """Return a one-way identity fingerprint without exposing token material."""
+    token = read_runtime_token(path)
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def validate_private_key_file(path: Path) -> None:

@@ -11,7 +11,15 @@ from typing import Any
 
 from .cli import make_cli_handler, make_slash_handler, setup_cli
 from .config import PluginConfig, load_plugin_config
-from .tools import PHOENIX_STATUS_SCHEMA, make_status_handler, status_payload
+from .tools import (
+    PHOENIX_LIST_SCHEMA,
+    PHOENIX_RESOLVE_SCHEMA,
+    PHOENIX_STATUS_SCHEMA,
+    make_list_handler,
+    make_resolve_handler,
+    make_status_handler,
+    status_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +41,28 @@ def register(ctx: Any) -> None:
                 handler=make_status_handler(config_loader),
                 description="Check Phoenix reachability and active profile authentication.",
                 emoji="🔐",
+            ),
+        ),
+        (
+            "phoenix_list tool",
+            lambda: ctx.register_tool(
+                name="phoenix_list",
+                toolset="phoenix_list",
+                schema=PHOENIX_LIST_SCHEMA,
+                handler=make_list_handler(config_loader),
+                description="List Phoenix secret paths visible to the active profile identity.",
+                emoji="📋",
+            ),
+        ),
+        (
+            "phoenix_resolve tool",
+            lambda: ctx.register_tool(
+                name="phoenix_resolve",
+                toolset="phoenix_resolve",
+                schema=PHOENIX_RESOLVE_SCHEMA,
+                handler=make_resolve_handler(config_loader),
+                description="Resolve Phoenix refs; plaintext until sealed mode support lands.",
+                emoji="🔑",
             ),
         ),
         (
