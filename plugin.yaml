@@ -1,0 +1,9 @@
+name: phoenix
+version: 0.1.0
+description: "Phoenix Secrets Manager integration for Hermes"
+author: Phoenix Project
+kind: standalone
+provides_tools:
+  - phoenix_status
+provides_hooks:
+  - on_session_start
