@@ -56,7 +56,17 @@ class PhoenixClient:
         self._opener = self._build_opener()
 
     def _build_opener(self) -> urllib.request.OpenerDirector:
-        context = ssl.create_default_context(cafile=str(self.config.ca_cert) if self.config.ca_cert else None)
+        try:
+            context = ssl.create_default_context(
+                cafile=str(self.config.ca_file) if self.config.ca_file else None
+            )
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        except (OSError, ssl.SSLError) as exc:
+            raise ConfigurationError(
+                "Could not load the Phoenix CA trust file",
+                code="PHOENIX_CA_FILE_INVALID",
+                remediation="Confirm ca_file is a readable PEM CA bundle for the Phoenix server certificate.",
+            ) from exc
         if self.config.client_cert and self.config.client_key:
             validate_private_key_file(self.config.client_key)
             try:
@@ -83,6 +93,7 @@ class PhoenixClient:
             "X-Hermes-Channel": caller.channel,
             "X-Hermes-Tool": caller.tool,
             "X-Hermes-Task-Id": caller.task_id,
+            "X-Phoenix-Tool": caller.tool,
         }
         for key, value in values.items():
             sanitized = _audit_value(value)
@@ -98,7 +109,6 @@ class PhoenixClient:
         caller: CallerContext,
         query: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
-        expected_status: int = 200,
     ) -> Mapping[str, Any]:
         url = f"{self.config.server}{path}"
         if query:
@@ -137,18 +147,12 @@ class PhoenixClient:
 
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise ApiError("Phoenix response exceeded the size limit", status=status, code="PHOENIX_RESPONSE_TOO_LARGE")
-        if status < 200 or status >= 300:
-            raise ApiError(f"Phoenix request failed with HTTP {status}", status=status)
-        if status != expected_status:
-            code = "PHOENIX_APPROVAL_REQUIRED" if status == 202 else "PHOENIX_HTTP_ERROR"
-            message = "Phoenix request requires approval" if status == 202 else f"Phoenix request returned HTTP {status}"
+        if status != 200:
             raise ApiError(
-                message,
+                f"Phoenix request returned HTTP {status}",
                 status=status,
-                code=code,
-                remediation="Use an operator-approved, non-step-up runtime role for unattended Hermes tool calls."
-                if status == 202
-                else "Check Phoenix server logs and audit records for safe diagnostic detail.",
+                code="PHOENIX_HTTP_ERROR",
+                remediation="Check Phoenix server logs and audit records for safe diagnostic detail.",
             )
         try:
             payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -196,6 +200,8 @@ class PhoenixClient:
             caller=caller,
         )
         raw_paths = payload.get("paths")
+        if raw_paths is None:
+            raw_paths = []
         if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
             raise ApiError(
                 "Phoenix list response was invalid",
@@ -204,21 +210,17 @@ class PhoenixClient:
             )
         paths: list[str] = []
         for path in raw_paths:
-            try:
-                normalized_path = normalize_ref(f"phoenix://{path}")[len("phoenix://") :]
-            except ConfigurationError as exc:
-                raise ApiError(
-                    "Phoenix list response contained an invalid path",
-                    status=200,
-                    code="PHOENIX_RESPONSE_INVALID",
-                ) from exc
-            if normalized_prefix and not normalized_path.startswith(normalized_prefix):
+            if (
+                not path.startswith(normalized_prefix)
+                or _CONTROL_RE.search(path)
+                or any(segment in {".", ".."} for segment in path.split("/"))
+            ):
                 raise ApiError(
                     "Phoenix list response contained a path outside the requested prefix",
                     status=200,
                     code="PHOENIX_RESPONSE_INVALID",
                 )
-            paths.append(normalized_path)
+            paths.append(path)
         return {"prefix": normalized_prefix, "paths": paths}
 
     def resolve(self, refs: list[str], *, caller: CallerContext) -> dict[str, Any]:
@@ -288,5 +290,6 @@ class PhoenixClient:
             "notes": [
                 "Authenticated status preflight passed.",
                 "Phoenix REST API version reporting and TLS certificate metadata are not available in this scaffold.",
+                *self.config.configuration_warnings,
             ],
         }

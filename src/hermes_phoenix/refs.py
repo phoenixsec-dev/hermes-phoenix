@@ -55,14 +55,30 @@ def normalize_ref(value: str, default_namespace: str | None = None) -> str:
 
 
 def normalize_list_prefix(value: str | None, default_namespace: str | None = None) -> str:
-    prefix = (value or "").strip()
-    if prefix.startswith(_REF_PREFIX):
-        prefix = prefix[len(_REF_PREFIX) :]
-    elif not prefix and default_namespace:
+    raw_prefix = (value or "").strip()
+    if raw_prefix.startswith(_REF_PREFIX):
+        prefix = raw_prefix[len(_REF_PREFIX) :].strip("/")
+        if not prefix:
+            raise ConfigurationError(
+                "Phoenix root listing is not allowed",
+                code="PHOENIX_REF_INVALID",
+                remediation="Provide a phoenix:// prefix below a namespace.",
+            )
+    elif raw_prefix:
+        if raw_prefix.startswith("/"):
+            raise ConfigurationError("Phoenix list prefix must not start with '/'", code="PHOENIX_REF_INVALID")
+        if not default_namespace:
+            raise ConfigurationError(
+                "Phoenix list prefix must use phoenix:// when default_namespace is not configured",
+                code="PHOENIX_REF_INVALID",
+            )
+        prefix = f"{validate_namespace(default_namespace)}/{raw_prefix.strip('/')}"
+    elif default_namespace:
         prefix = validate_namespace(default_namespace)
-    elif prefix and default_namespace and "/" not in prefix:
-        prefix = f"{validate_namespace(default_namespace)}/{prefix}"
-    prefix = prefix.strip("/")
-    if not prefix:
-        return ""
+    else:
+        raise ConfigurationError(
+            "Phoenix root listing is not allowed",
+            code="PHOENIX_REF_INVALID",
+            remediation="Configure default_namespace or provide a phoenix:// prefix.",
+        )
     return f"{'/'.join(_validate_segments(prefix, label='Phoenix list prefix'))}/"

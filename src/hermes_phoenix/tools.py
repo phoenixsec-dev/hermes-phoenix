@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import replace
 from typing import Any, Callable
 
 from .client import CallerContext, PhoenixClient
 from .config import PluginConfig
 from .errors import ConfigurationError, PhoenixPluginError
+
+logger = logging.getLogger(__name__)
 
 _MAX_RESOLVE_REFS = 50
 _MAX_ARGUMENT_LENGTH = 1024
@@ -67,20 +71,32 @@ def caller_from_kwargs(profile_name: str, *, tool: str, kwargs: dict[str, Any]) 
     return CallerContext(
         profile=profile_name,
         session_id=kwargs.get("session_id") if isinstance(kwargs.get("session_id"), str) else None,
-        channel=kwargs.get("platform") if isinstance(kwargs.get("platform"), str) else None,
+        channel=None,
         tool=tool,
         task_id=kwargs.get("task_id") if isinstance(kwargs.get("task_id"), str) else None,
     )
 
 
-def status_payload(config_loader: Callable[[], PluginConfig], **kwargs: Any) -> dict[str, Any]:
+def status_payload(
+    config_loader: Callable[[], PluginConfig],
+    *,
+    channel: str | None = None,
+    timeout_cap: float | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
     try:
         config = config_loader()
-        caller = caller_from_kwargs(config.profile_name, tool="phoenix_status", kwargs=kwargs)
+        if timeout_cap is not None and config.timeout_seconds > timeout_cap:
+            config = replace(config, timeout_seconds=timeout_cap)
+        caller = replace(
+            caller_from_kwargs(config.profile_name, tool="phoenix_status", kwargs=kwargs),
+            channel=channel,
+        )
         return PhoenixClient(config).status(caller=caller)
     except PhoenixPluginError as exc:
         return {"ok": False, "error": exc.to_payload().as_dict()}
     except Exception:
+        logger.exception("Unexpected Phoenix plugin error while building status payload")
         return {
             "ok": False,
             "error": {
@@ -95,6 +111,7 @@ def status_payload(config_loader: Callable[[], PluginConfig], **kwargs: Any) -> 
 def _failure_payload(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, PhoenixPluginError):
         return {"ok": False, "error": exc.to_payload().as_dict()}
+    logger.exception("Unexpected Phoenix plugin error while building tool result")
     return {
         "ok": False,
         "error": {
@@ -149,6 +166,12 @@ def resolve_payload(
                 f"phoenix_resolve refs must contain 1 to {_MAX_RESOLVE_REFS} non-empty strings"
             )
         config = config_loader()
+        if not config.enable_resolve:
+            raise ConfigurationError(
+                "phoenix_resolve is disabled",
+                code="PHOENIX_RESOLVE_DISABLED",
+                remediation="Set plugins.entries.phoenix.enable_resolve to true and restart Hermes only if plaintext model-visible resolution is acceptable.",
+            )
         caller = caller_from_kwargs(config.profile_name, tool="phoenix_resolve", kwargs=kwargs)
         result = PhoenixClient(config).resolve(refs, caller=caller)
         values = result["values"]

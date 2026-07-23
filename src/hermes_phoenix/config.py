@@ -18,6 +18,7 @@ _ALLOWED_KEYS = {
     "server",
     "token_file",
     "role",
+    "ca_file",
     "ca_cert",
     "client_cert",
     "client_key",
@@ -26,6 +27,7 @@ _ALLOWED_KEYS = {
     "default_namespace",
     "spec_path",
     "timeout_seconds",
+    "enable_resolve",
     "scrub",
 }
 _ALLOWED_SCRUB_KEYS = {"enabled", "placeholder"}
@@ -43,7 +45,7 @@ class PluginConfig:
     profile_name: str
     token_file: Path | None
     role: str | None
-    ca_cert: Path | None
+    ca_file: Path | None
     client_cert: Path | None
     client_key: Path | None
     seal_key_file: Path | None
@@ -51,7 +53,9 @@ class PluginConfig:
     default_namespace: str
     spec_path: Path | None
     timeout_seconds: float
+    enable_resolve: bool
     scrub: ScrubConfig
+    configuration_warnings: tuple[str, ...]
 
     @property
     def auth_mode(self) -> str:
@@ -157,7 +161,12 @@ def load_plugin_config(
         source.get("token_file") or env.get("PHOENIX_TOKEN_FILE"),
         label="plugins.entries.phoenix.token_file",
     )
-    ca_cert = _path(source.get("ca_cert") or env.get("PHOENIX_CA_CERT"), label="ca_cert")
+    if source.get("ca_file") and source.get("ca_cert"):
+        raise ConfigurationError("Configure only ca_file; ca_cert is a deprecated alias")
+    ca_file = _path(
+        source.get("ca_file") or source.get("ca_cert") or env.get("PHOENIX_CA_CERT"),
+        label="ca_file",
+    )
     client_cert = _path(
         source.get("client_cert") or env.get("PHOENIX_CLIENT_CERT"),
         label="client_cert",
@@ -198,17 +207,30 @@ def load_plugin_config(
     namespace_raw = source.get("default_namespace") or f"services/hermes/{profile_name}"
     namespace = validate_namespace(_string(namespace_raw, label="default_namespace", required=True) or "")
     spec_path = _path(source.get("spec_path"), label="spec_path")
+    enable_resolve = _boolean(source.get("enable_resolve"), label="enable_resolve", default=False)
     scrub_enabled = _boolean(scrub_raw.get("enabled"), label="scrub.enabled", default=True)
     placeholder = _string(scrub_raw.get("placeholder"), label="scrub.placeholder") or "[PHOENIX-SCRUBBED:{name}]"
     if "{name}" not in placeholder:
         raise ConfigurationError("scrub.placeholder must contain '{name}'")
+
+    warnings: list[str] = []
+    if source.get("ca_cert"):
+        warnings.append("ca_cert is a deprecated alias; use ca_file instead.")
+    if "scrub" in source:
+        warnings.append("scrub configuration is inactive until the B4 scrub-hook phase is implemented.")
+    if seal_mode or seal_key_file is not None:
+        warnings.append(
+            "seal_mode and seal_key_file do not provide sealed responses until B4; resolve remains fail-closed."
+        )
+    if spec_path is not None:
+        warnings.append("spec_path is inactive until the B4 value-scrubbing phase is implemented.")
 
     return PluginConfig(
         server=server,
         profile_name=profile_name,
         token_file=token_file,
         role=role,
-        ca_cert=ca_cert,
+        ca_file=ca_file,
         client_cert=client_cert,
         client_key=client_key,
         seal_key_file=seal_key_file,
@@ -216,5 +238,7 @@ def load_plugin_config(
         default_namespace=namespace,
         spec_path=spec_path,
         timeout_seconds=timeout_seconds,
+        enable_resolve=enable_resolve,
         scrub=ScrubConfig(enabled=scrub_enabled, placeholder=placeholder),
+        configuration_warnings=tuple(warnings),
     )

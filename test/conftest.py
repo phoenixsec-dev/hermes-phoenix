@@ -11,6 +11,12 @@ import pytest
 class StubPhoenix:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
+        self.list_payload: dict[str, Any] = {
+            "paths": [
+                "services/hermes/kit-main/calendar/password",
+                "services/hermes/kit-main/storage/token",
+            ]
+        }
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -24,15 +30,7 @@ class StubPhoenix:
                     else:
                         self._reply(401, {"error": "unauthorized", "code": "UNAUTHORIZED"})
                 elif self.path == "/v1/secrets/services/hermes/kit-main/":
-                    self._reply(
-                        200,
-                        {
-                            "paths": [
-                                "services/hermes/kit-main/calendar/password",
-                                "services/hermes/kit-main/storage/token",
-                            ]
-                        },
-                    )
+                    self._reply(200, owner.list_payload)
                 elif self.path.startswith("/non-json"):
                     self._raw(200, b"secret-looking response that must not escape", "text/plain")
                 elif self.path.startswith("/secret-error"):

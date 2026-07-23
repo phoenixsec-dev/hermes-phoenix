@@ -36,7 +36,45 @@ def test_status_authenticates_and_sends_sanitized_audit_headers(stub_phoenix, tm
     assert policy_request["headers"]["Authorization"] == "Bearer test-bootstrap-token"
     assert policy_request["headers"]["X-Hermes-Profile"] == "kit-main forged"
     assert policy_request["headers"]["X-Hermes-Tool"] == "phoenix_status"
+    assert policy_request["headers"]["X-Phoenix-Tool"] == "phoenix_status"
     assert policy_request["headers"]["X-Hermes-Task-Id"] == "task-1"
+
+
+def test_custom_ca_file_builds_tls_12_context(stub_phoenix, tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeSSLContext:
+        minimum_version = None
+
+        def load_cert_chain(self, _cert, _key):
+            raise AssertionError("client certificates were not configured")
+
+    context = FakeSSLContext()
+
+    def fake_create_default_context(*, cafile=None):
+        captured["cafile"] = cafile
+        return context
+
+    monkeypatch.setattr("hermes_phoenix.client.ssl.create_default_context", fake_create_default_context)
+    ca_file = tmp_path / "phoenix-ca.pem"
+    PhoenixClient(_config(stub_phoenix, tmp_path, ca_file=str(ca_file)))
+    assert captured["cafile"] == str(ca_file)
+    assert context.minimum_version.name == "TLSv1_2"
+
+
+def test_invalid_ca_file_fails_with_safe_configuration_error(stub_phoenix, tmp_path):
+    with pytest.raises(ConfigurationError) as caught:
+        PhoenixClient(_config(stub_phoenix, tmp_path, ca_file=str(tmp_path / "missing-ca.pem")))
+    assert caught.value.code == "PHOENIX_CA_FILE_INVALID"
+    assert "missing-ca.pem" not in str(caught.value)
+
+
+def test_status_includes_inactive_configuration_warnings(stub_phoenix, tmp_path, monkeypatch):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path, spec_path=str(tmp_path / "spec.json")))
+    monkeypatch.setattr(client, "health", lambda **_kwargs: {"status": "ok"})
+    monkeypatch.setattr(client, "check_auth", lambda **_kwargs: None)
+    result = client.status(caller=CallerContext(profile="default"))
+    assert any("spec_path is inactive" in note for note in result["notes"])
 
 
 def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_path, monkeypatch):
@@ -99,6 +137,23 @@ def test_resolve_rejects_response_refs_that_were_not_requested(stub_phoenix, tmp
     assert "must-not-escape" not in str(caught.value)
 
 
+@pytest.mark.parametrize("payload", [{"paths": None}, {}])
+def test_list_treats_null_or_absent_paths_as_empty(stub_phoenix, tmp_path, monkeypatch, payload):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
+    assert client.list(caller=CallerContext(profile="kit-main")) == {
+        "prefix": "services/hermes/kit-main/",
+        "paths": [],
+    }
+
+
+def test_list_preserves_legal_server_path_characters(stub_phoenix, tmp_path, monkeypatch):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    path = "services/hermes/kit-main/calendar/2026 summer+east:token"
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
+    assert client.list(caller=CallerContext(profile="kit-main"))["paths"] == [path]
+
+
 @pytest.mark.parametrize("paths", ["not-a-list", [123]])
 def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
@@ -108,9 +163,19 @@ def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
 
 
-def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "path",
+    [
+        "other/key",
+        "services/hermes/kit-main/../other/secret",
+        "services/hermes/kit-main/./secret",
+        "services/hermes/kit-main/forged\npath",
+        "services/hermes/kit-main/forged\x85path",
+    ],
+)
+def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monkeypatch, path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
-    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": ["other/key"]})
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
     with pytest.raises(ApiError) as caught:
         client.list(caller=CallerContext(profile="kit-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"

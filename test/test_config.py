@@ -15,7 +15,54 @@ def test_config_uses_profile_namespace_and_never_env_bearer(tmp_path):
     )
     assert config.default_namespace == "services/hermes/kit-main"
     assert config.token_file == token_file
+    assert config.enable_resolve is False
     assert not hasattr(config, "token")
+
+
+def test_config_accepts_enable_resolve_and_custom_ca_file(tmp_path):
+    ca_file = tmp_path / "phoenix-ca.pem"
+    config = load_plugin_config(
+        raw={
+            "server": "https://192.168.0.118:9090",
+            "token_file": str(tmp_path / "token"),
+            "ca_file": str(ca_file),
+            "enable_resolve": True,
+        },
+        environ={},
+    )
+    assert config.ca_file == ca_file
+    assert config.enable_resolve is True
+
+
+def test_config_expands_home_in_ca_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = load_plugin_config(
+        raw={
+            "server": "https://phoenix.example:9090",
+            "token_file": str(tmp_path / "token"),
+            "ca_file": "~/.config/phoenix/ca.pem",
+        },
+        environ={},
+    )
+    assert config.ca_file == tmp_path / ".config/phoenix/ca.pem"
+
+
+def test_config_warns_when_future_phase_options_are_set(tmp_path):
+    config = load_plugin_config(
+        raw={
+            "server": "https://phoenix.example:9090",
+            "token_file": str(tmp_path / "token"),
+            "seal_mode": True,
+            "seal_key_file": str(tmp_path / "seal.key"),
+            "spec_path": str(tmp_path / "env-spec.json"),
+            "scrub": {"enabled": True},
+        },
+        environ={},
+    )
+    rendered = " ".join(config.configuration_warnings)
+    assert "B4 scrub-hook" in rendered
+    assert "sealed responses until B4" in rendered
+    assert "spec_path" in rendered
 
 
 def test_config_supports_mtls_without_bearer(tmp_path):
@@ -41,6 +88,16 @@ def test_config_supports_mtls_without_bearer(tmp_path):
         ({"server": "https://phoenix.example", "token_file": "relative/token"}, "absolute path"),
         ({"server": "https://phoenix.example", "token_file": "/tmp/token", "default_namespace": "../escape"}, "invalid path segment"),
         ({"server": "https://phoenix.example", "token_file": "/tmp/token", "seal_mode": True}, "seal_key_file"),
+        (
+            {
+                "server": "https://phoenix.example",
+                "token_file": "/tmp/token",
+                "ca_file": "/tmp/ca.pem",
+                "ca_cert": "/tmp/legacy-ca.pem",
+            },
+            "only ca_file",
+        ),
+        ({"server": "https://phoenix.example", "token_file": "/tmp/token", "enable_resolve": "yes"}, "true or false"),
     ],
 )
 def test_config_rejects_unsafe_values(raw, message):
