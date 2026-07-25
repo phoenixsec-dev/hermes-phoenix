@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 
 from hermes_phoenix.config import load_plugin_config
+from hermes_phoenix.scrub import get_scrub_registry
 from hermes_phoenix.tools import make_list_handler, make_resolve_handler, status_payload
 
+SEAL_PRIVATE_KEY = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="
 
-def _loader(stub_phoenix, tmp_path, *, enable_resolve=False):
+
+def _loader(stub_phoenix, tmp_path, *, enable_resolve=False, **extra):
     token = tmp_path / "token"
     token.write_text("test-bootstrap-token")
     token.chmod(0o600)
@@ -16,6 +19,7 @@ def _loader(stub_phoenix, tmp_path, *, enable_resolve=False):
             "token_file": str(token),
             "default_namespace": "services/hermes/kit-main",
             "enable_resolve": enable_resolve,
+            **extra,
         },
         environ={},
         profile_name="kit-main",
@@ -67,6 +71,41 @@ def test_resolve_handler_reports_partial_plaintext_result(stub_phoenix, tmp_path
         "phoenix://services/hermes/kit-main/calendar/password": "synthetic-secret-value"
     }
     assert "secret-looking" not in str(payload)
+
+
+def test_direct_unsealed_resolve_remains_plaintext_but_registers_subsequent_scrubbing(stub_phoenix, tmp_path):
+    payload = json.loads(
+        make_resolve_handler(_loader(stub_phoenix, tmp_path, enable_resolve=True))(
+            {"refs": ["calendar/password"]}
+        )
+    )
+    assert payload["values"]["phoenix://services/hermes/kit-main/calendar/password"] == "synthetic-secret-value"
+    assert get_scrub_registry().scrub("later synthetic-secret-value output") == (
+        "later [PHOENIX-SCRUBBED:password] output"
+    )
+
+
+def test_sealed_resolve_handler_returns_no_plaintext(stub_phoenix, tmp_path):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    payload = json.loads(
+        make_resolve_handler(
+            _loader(
+                stub_phoenix,
+                tmp_path,
+                enable_resolve=True,
+                seal_mode=True,
+                seal_key_file=str(seal_key),
+            )
+        )({"refs": ["calendar/password"]})
+    )
+    assert payload["ok"] is True
+    assert payload["mode"] == "sealed"
+    assert payload["values"]["phoenix://services/hermes/kit-main/calendar/password"].startswith(
+        "PHOENIX_SEALED:"
+    )
+    assert "synthetic-secret-value" not in str(payload)
 
 
 def test_resolve_handler_rechecks_plugin_gate_at_call_time(stub_phoenix, tmp_path):

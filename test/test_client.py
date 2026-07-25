@@ -4,7 +4,10 @@ import pytest
 
 from hermes_phoenix.client import CallerContext, PhoenixClient
 from hermes_phoenix.config import load_plugin_config
-from hermes_phoenix.errors import ApiError, ConfigurationError
+from hermes_phoenix.errors import ApiError, ConfigurationError, IdentityError, SealedResponseError
+from hermes_phoenix.scrub import get_scrub_registry
+
+SEAL_PRIVATE_KEY = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="
 
 
 def _config(stub_phoenix, tmp_path, **extra):
@@ -40,6 +43,13 @@ def test_status_authenticates_and_sends_sanitized_audit_headers(stub_phoenix, tm
     assert policy_request["headers"]["X-Hermes-Task-Id"] == "task-1"
 
 
+def test_client_registers_runtime_bearer_with_scrubber(stub_phoenix, tmp_path):
+    PhoenixClient(_config(stub_phoenix, tmp_path))
+    assert get_scrub_registry().scrub("leak test-bootstrap-token now") == (
+        "leak [PHOENIX-SCRUBBED:kit-main-phoenix-token] now"
+    )
+
+
 def test_custom_ca_file_builds_tls_12_context(stub_phoenix, tmp_path, monkeypatch):
     captured = {}
 
@@ -69,12 +79,23 @@ def test_invalid_ca_file_fails_with_safe_configuration_error(stub_phoenix, tmp_p
     assert "missing-ca.pem" not in str(caught.value)
 
 
-def test_status_includes_inactive_configuration_warnings(stub_phoenix, tmp_path, monkeypatch):
-    client = PhoenixClient(_config(stub_phoenix, tmp_path, spec_path=str(tmp_path / "spec.json")))
+def test_status_remains_available_and_reports_invalid_seal_configuration_safely(stub_phoenix, tmp_path, monkeypatch):
+    client = PhoenixClient(
+        _config(
+            stub_phoenix,
+            tmp_path,
+            seal_mode=True,
+            seal_key_file=str(tmp_path / "missing-seal.key"),
+        )
+    )
     monkeypatch.setattr(client, "health", lambda **_kwargs: {"status": "ok"})
     monkeypatch.setattr(client, "check_auth", lambda **_kwargs: None)
     result = client.status(caller=CallerContext(profile="default"))
-    assert any("spec_path is inactive" in note for note in result["notes"])
+    assert result["ok"] is True
+    assert result["seal_configuration"] == {"key": "invalid"}
+    rendered = str(result)
+    assert "missing-seal.key" not in rendered
+    assert any("fails closed" in note for note in result["notes"])
 
 
 def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_path, monkeypatch):
@@ -198,18 +219,121 @@ def test_resolve_rejects_malformed_value_and_error_maps(stub_phoenix, tmp_path, 
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
 
 
-def test_resolve_fails_closed_until_sealed_support_lands(stub_phoenix, tmp_path):
-    config = _config(
-        stub_phoenix,
-        tmp_path,
-        seal_mode=True,
-        seal_key_file=str(tmp_path / "seal.key"),
+def test_sealed_resolve_sends_public_key_and_returns_only_opaque_tokens(stub_phoenix, tmp_path):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    client = PhoenixClient(
+        _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
     )
-    client = PhoenixClient(config)
-    with pytest.raises(ConfigurationError) as caught:
+    result = client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert result["mode"] == "sealed"
+    token = result["values"]["phoenix://services/hermes/kit-main/calendar/password"]
+    assert token.startswith("PHOENIX_SEALED:")
+    assert "synthetic-secret-value" not in str(result)
+    request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve")
+    assert request["headers"]["X-Phoenix-Seal-Key"] == "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
+
+
+def test_sealed_resolve_rejects_plaintext_only_http_200_without_leaking_it(stub_phoenix, tmp_path, monkeypatch):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    client = PhoenixClient(
+        _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
+    )
+    monkeypatch.setattr(
+        client,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "values": {"phoenix://services/hermes/kit-main/calendar/password": "must-not-escape"},
+            "errors": {},
+        },
+    )
+    with pytest.raises(SealedResponseError) as caught:
         client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
-    assert caught.value.code == "PHOENIX_SEALED_NOT_IMPLEMENTED"
-    assert not any(item["path"] == "/v1/resolve" for item in stub_phoenix.requests)
+    assert caught.value.code == "PHOENIX_SEALED_VALUES_MISSING"
+    assert "must-not-escape" not in str(caught.value.to_payload().as_dict())
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"sealed_values": []},
+        {
+            "sealed_values": {
+                "phoenix://services/hermes/kit-main/calendar/password": {
+                    "version": 1,
+                    "algorithm": "wrong",
+                    "path": "services/hermes/kit-main/calendar/password",
+                    "ref": "phoenix://services/hermes/kit-main/calendar/password",
+                    "ephemeral_key": "must-not-escape",
+                    "nonce": "must-not-escape",
+                    "ciphertext": "must-not-escape",
+                }
+            }
+        },
+        {
+            "sealed_values": {
+                "phoenix://services/hermes/kit-main/other": {
+                    "version": 1,
+                    "algorithm": "x25519-xsalsa20-poly1305",
+                    "path": "services/hermes/kit-main/other",
+                    "ref": "phoenix://services/hermes/kit-main/other",
+                    "ephemeral_key": "must-not-escape",
+                    "nonce": "must-not-escape",
+                    "ciphertext": "must-not-escape",
+                }
+            }
+        },
+    ],
+)
+def test_sealed_resolve_rejects_malformed_or_mismatched_envelopes(stub_phoenix, tmp_path, monkeypatch, payload):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    client = PhoenixClient(
+        _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
+    )
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
+    with pytest.raises(SealedResponseError) as caught:
+        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_SEALED_VALUES_INVALID"
+    assert "must-not-escape" not in str(caught.value.to_payload().as_dict())
+
+
+def test_sealed_dry_run_sends_handshake_but_accepts_plaintext_ok_status(stub_phoenix, tmp_path):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    client = PhoenixClient(
+        _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
+    )
+    result = client.resolve(
+        ["calendar/password"],
+        caller=CallerContext(profile="kit-main"),
+        dry_run=True,
+    )
+    assert result == {
+        "mode": "dry_run",
+        "values": {"phoenix://services/hermes/kit-main/calendar/password": "ok"},
+        "errors": {},
+    }
+    request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve?dry_run=true")
+    assert "X-Phoenix-Seal-Key" in request["headers"]
+
+
+def test_missing_or_malformed_seal_key_fails_resolve_before_network(stub_phoenix, tmp_path):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text("not-base64")
+    seal_key.chmod(0o600)
+    client = PhoenixClient(
+        _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
+    )
+    with pytest.raises(IdentityError) as caught:
+        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    assert caught.value.code == "PHOENIX_SEAL_KEY_INVALID"
+    assert not any(item["path"].startswith("/v1/resolve") for item in stub_phoenix.requests)
 
 
 def test_non_json_error_does_not_include_response_body(stub_phoenix, tmp_path):

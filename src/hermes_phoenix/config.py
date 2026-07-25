@@ -210,20 +210,24 @@ def load_plugin_config(
     enable_resolve = _boolean(source.get("enable_resolve"), label="enable_resolve", default=False)
     scrub_enabled = _boolean(scrub_raw.get("enabled"), label="scrub.enabled", default=True)
     placeholder = _string(scrub_raw.get("placeholder"), label="scrub.placeholder") or "[PHOENIX-SCRUBBED:{name}]"
-    if "{name}" not in placeholder:
-        raise ConfigurationError("scrub.placeholder must contain '{name}'")
+    remainder = placeholder.replace("{name}", "", 1)
+    if (
+        placeholder.count("{name}") != 1
+        or "{" in remainder
+        or "}" in remainder
+        or not remainder
+    ):
+        raise ConfigurationError(
+            "scrub.placeholder must contain exactly one '{name}' field plus a literal delimiter"
+        )
 
     warnings: list[str] = []
     if source.get("ca_cert"):
         warnings.append("ca_cert is a deprecated alias; use ca_file instead.")
-    if "scrub" in source:
-        warnings.append("scrub configuration is inactive until the B4 scrub-hook phase is implemented.")
-    if seal_mode or seal_key_file is not None:
+    if role:
         warnings.append(
-            "seal_mode and seal_key_file do not provide sealed responses until B4; resolve remains fail-closed."
+            "role is inactive until the B5 in-memory session phase; runtime operations fail closed."
         )
-    if spec_path is not None:
-        warnings.append("spec_path is inactive until the B4 value-scrubbing phase is implemented.")
 
     return PluginConfig(
         server=server,

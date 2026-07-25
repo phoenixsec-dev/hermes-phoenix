@@ -47,22 +47,23 @@ def test_config_expands_home_in_ca_file(tmp_path, monkeypatch):
     assert config.ca_file == tmp_path / ".config/phoenix/ca.pem"
 
 
-def test_config_warns_when_future_phase_options_are_set(tmp_path):
+def test_config_treats_b4_options_as_functional_and_warns_only_for_b5_role(tmp_path):
     config = load_plugin_config(
         raw={
             "server": "https://phoenix.example:9090",
             "token_file": str(tmp_path / "token"),
+            "role": "kit-runtime",
             "seal_mode": True,
             "seal_key_file": str(tmp_path / "seal.key"),
-            "spec_path": str(tmp_path / "env-spec.json"),
+            "spec_path": str(tmp_path / "env-spec"),
             "scrub": {"enabled": True},
         },
         environ={},
     )
     rendered = " ".join(config.configuration_warnings)
-    assert "B4 scrub-hook" in rendered
-    assert "sealed responses until B4" in rendered
-    assert "spec_path" in rendered
+    assert "B4" not in rendered
+    assert "spec_path" not in rendered
+    assert "B5 in-memory session" in rendered
 
 
 def test_config_supports_mtls_without_bearer(tmp_path):
@@ -98,6 +99,22 @@ def test_config_supports_mtls_without_bearer(tmp_path):
             "only ca_file",
         ),
         ({"server": "https://phoenix.example", "token_file": "/tmp/token", "enable_resolve": "yes"}, "true or false"),
+        (
+            {
+                "server": "https://phoenix.example",
+                "token_file": "/tmp/token",
+                "scrub": {"placeholder": "{name}-{unexpected}"},
+            },
+            "exactly one",
+        ),
+        (
+            {
+                "server": "https://phoenix.example",
+                "token_file": "/tmp/token",
+                "scrub": {"placeholder": "{name}"},
+            },
+            "literal delimiter",
+        ),
     ],
 )
 def test_config_rejects_unsafe_values(raw, message):

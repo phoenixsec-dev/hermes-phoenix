@@ -9,3 +9,5 @@ provides_tools:
   - phoenix_resolve
 provides_hooks:
   - on_session_start
+  - transform_terminal_output
+  - transform_tool_result

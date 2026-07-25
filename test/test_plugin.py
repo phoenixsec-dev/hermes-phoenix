@@ -27,10 +27,11 @@ class FakeContext:
         self.hooks.append((name, callback))
 
 
-def _registration_config(*, enable_resolve=False, warnings=()):
+def _registration_config(*, enable_resolve=False, warnings=(), **extra):
     return SimpleNamespace(
         enable_resolve=enable_resolve,
         configuration_warnings=warnings,
+        **extra,
     )
 
 
@@ -47,7 +48,22 @@ def test_register_omits_plaintext_resolve_by_default_and_does_no_network(monkeyp
     assert [item["toolset"] for item in ctx.tools] == ["phoenix", "phoenix_list"]
     assert [item["name"] for item in ctx.cli] == ["phoenix"]
     assert [item["name"] for item in ctx.commands] == ["phoenix"]
-    assert [name for name, _callback in ctx.hooks] == ["on_session_start"]
+    assert [name for name, _callback in ctx.hooks] == [
+        "transform_terminal_output",
+        "transform_tool_result",
+        "on_session_start",
+    ]
+
+
+def test_seal_mode_does_not_implicitly_register_resolve(monkeypatch):
+    monkeypatch.setattr(
+        plugin,
+        "load_plugin_config",
+        lambda **_kwargs: _registration_config(seal_mode=True),
+    )
+    ctx = FakeContext()
+    plugin.register(ctx)
+    assert "phoenix_resolve" not in [item["name"] for item in ctx.tools]
 
 
 def test_register_logs_inactive_configuration_warnings(monkeypatch, caplog):
@@ -96,7 +112,7 @@ def test_session_preflight_has_short_timeout_and_real_channel(monkeypatch):
     monkeypatch.setattr(plugin, "status_payload", fake_status_payload)
     ctx = FakeContext()
     plugin.register(ctx)
-    callback = ctx.hooks[0][1]
+    callback = dict(ctx.hooks)["on_session_start"]
     callback(session_id="session-1", platform="telegram")
     callback(session_id="session-1", platform="telegram")
     assert len(calls) == 1
@@ -114,10 +130,38 @@ def test_session_preflight_cache_is_bounded(monkeypatch):
     )
     ctx = FakeContext()
     plugin.register(ctx)
-    callback = ctx.hooks[0][1]
+    callback = dict(ctx.hooks)["on_session_start"]
     for index in range(257):
         callback(session_id=f"session-{index}")
     callback(session_id="session-256")
     assert len(calls) == 257
     callback(session_id="session-0")
     assert len(calls) == 258
+
+
+def test_transform_hooks_return_strings_and_preserve_direct_resolve(monkeypatch):
+    monkeypatch.setattr(plugin, "load_plugin_config", lambda **_kwargs: _registration_config())
+    registry = plugin.get_scrub_registry()
+    registry.register("synthetic-secret", name="CALDAV_PASSWORD")
+    ctx = FakeContext()
+    plugin.register(ctx)
+    hooks = dict(ctx.hooks)
+
+    assert hooks["transform_terminal_output"](
+        command="env",
+        output="value=synthetic-secret",
+        returncode=0,
+        task_id="task-1",
+        env_type="local",
+    ) == "value=[PHOENIX-SCRUBBED:CALDAV_PASSWORD]"
+    assert hooks["transform_tool_result"](
+        tool_name="other_tool",
+        args={},
+        result='{"value":"synthetic-secret"}',
+    ) == '{"value":"[PHOENIX-SCRUBBED:CALDAV_PASSWORD]"}'
+    direct = '{"values":{"ref":"synthetic-secret"}}'
+    assert hooks["transform_tool_result"](
+        tool_name="phoenix_resolve",
+        args={"refs": ["ref"]},
+        result=direct,
+    ) == direct

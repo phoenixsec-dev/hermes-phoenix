@@ -12,6 +12,8 @@ from typing import Any
 
 from .cli import make_cli_handler, make_slash_handler, setup_cli
 from .config import PluginConfig, load_plugin_config
+from .identity import read_runtime_token
+from .scrub import get_scrub_registry, register_spec_environment
 from .tools import (
     PHOENIX_LIST_SCHEMA,
     PHOENIX_RESOLVE_SCHEMA,
@@ -45,6 +47,43 @@ def register(ctx: Any) -> None:
         for warning in registration_config.configuration_warnings:
             logger.warning("Phoenix configuration warning: %s", warning)
 
+        scrub = get_scrub_registry()
+        scrub_config = getattr(registration_config, "scrub", None)
+        if scrub_config is not None:
+            scrub.configure(
+                enabled=bool(getattr(scrub_config, "enabled", True)),
+                placeholder=str(
+                    getattr(scrub_config, "placeholder", "[PHOENIX-SCRUBBED:{name}]")
+                ),
+            )
+        token_file = getattr(registration_config, "token_file", None)
+        if token_file is not None:
+            try:
+                scrub.register(
+                    read_runtime_token(token_file),
+                    name=f"{profile_name}-phoenix-token",
+                )
+            except Exception:
+                logger.warning("Could not register the Phoenix runtime token with output scrubbing")
+        spec_path = getattr(registration_config, "spec_path", None)
+        if spec_path is not None:
+            try:
+                register_spec_environment(spec_path, registry=scrub)
+            except Exception:
+                logger.warning("Could not load Phoenix spec_path names for output scrubbing")
+
+    scrub = get_scrub_registry()
+
+    def transform_terminal_output(*, output: str, **_kwargs: Any) -> str:
+        return scrub.scrub(output)
+
+    def transform_tool_result(*, tool_name: str, result: str, **_kwargs: Any) -> str:
+        # Explicitly enabled unsealed phoenix_resolve is documented as plaintext
+        # in its direct result. Registration protects subsequent output only.
+        if tool_name == "phoenix_resolve":
+            return result
+        return scrub.scrub(result)
+
     registrations = [
         (
             "phoenix_status tool",
@@ -67,6 +106,14 @@ def register(ctx: Any) -> None:
                 description="List Phoenix secret paths visible to the active profile identity.",
                 emoji="📋",
             ),
+        ),
+        (
+            "transform_terminal_output hook",
+            lambda: ctx.register_hook("transform_terminal_output", transform_terminal_output),
+        ),
+        (
+            "transform_tool_result hook",
+            lambda: ctx.register_hook("transform_tool_result", transform_tool_result),
         ),
         (
             "hermes phoenix CLI",
@@ -98,7 +145,7 @@ def register(ctx: Any) -> None:
                     toolset="phoenix_resolve",
                     schema=PHOENIX_RESOLVE_SCHEMA,
                     handler=make_resolve_handler(config_loader),
-                    description="Resolve Phoenix refs as plaintext; explicitly enabled in plugin config.",
+                    description="Resolve Phoenix refs using the profile's configured sealed or unsealed mode.",
                     emoji="🔑",
                 ),
             ),

@@ -78,3 +78,7 @@ class ApiError(PhoenixPluginError):
             self.error_type = "access_denied"
         elif status == 202:
             self.error_type = "approval_required"
+
+
+class SealedResponseError(ApiError):
+    error_type = "sealed_response_error"

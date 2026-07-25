@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
+
+from hermes_phoenix.scrub import get_scrub_registry
+
+
+@pytest.fixture(autouse=True)
+def reset_scrub_registry():
+    registry = get_scrub_registry()
+    registry.reset_for_tests()
+    yield
+    registry.reset_for_tests()
 
 
 class StubPhoenix:
@@ -61,19 +72,33 @@ class StubPhoenix:
                 except json.JSONDecodeError:
                     body = None
                 owner.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
-                if self.path == "/v1/resolve" and isinstance(body, dict):
+                if self.path.startswith("/v1/resolve") and isinstance(body, dict):
                     refs = body.get("refs", [])
-                    values = {
-                        ref: "synthetic-secret-value"
-                        for ref in refs
-                        if ref != "phoenix://services/hermes/kit-main/missing"
-                    }
                     errors = (
                         {"phoenix://services/hermes/kit-main/missing": "secret-looking server diagnostic"}
                         if "phoenix://services/hermes/kit-main/missing" in refs
                         else {}
                     )
-                    self._reply(200, {"values": values, "errors": errors})
+                    successful_refs = [ref for ref in refs if ref not in errors]
+                    if self.path == "/v1/resolve?dry_run=true":
+                        self._reply(200, {"values": {ref: "ok" for ref in successful_refs}, "errors": errors})
+                    elif self.headers.get("X-Phoenix-Seal-Key"):
+                        sealed_values = {
+                            ref: {
+                                "version": 1,
+                                "algorithm": "x25519-xsalsa20-poly1305",
+                                "path": ref.removeprefix("phoenix://"),
+                                "ref": ref,
+                                "ephemeral_key": base64.b64encode(b"e" * 32).decode(),
+                                "nonce": base64.b64encode(b"n" * 24).decode(),
+                                "ciphertext": base64.b64encode(b"c" * 32).decode(),
+                            }
+                            for ref in successful_refs
+                        }
+                        self._reply(200, {"sealed_values": sealed_values, "errors": errors})
+                    else:
+                        values = {ref: "synthetic-secret-value" for ref in successful_refs}
+                        self._reply(200, {"values": values, "errors": errors})
                 else:
                     self._reply(404, {"error": "not found"})
 

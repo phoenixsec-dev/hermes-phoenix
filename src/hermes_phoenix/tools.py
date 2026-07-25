@@ -48,8 +48,8 @@ PHOENIX_LIST_SCHEMA: dict[str, Any] = {
 PHOENIX_RESOLVE_SCHEMA: dict[str, Any] = {
     "name": "phoenix_resolve",
     "description": (
-        "Resolve one or more Phoenix refs. In the current unsealed phase, returned values are plaintext; "
-        "only explicitly allow this tool for profiles that accept that exposure."
+        "Resolve one or more Phoenix refs. Sealed profiles return opaque PHOENIX_SEALED tokens; "
+        "explicitly enabled unsealed profiles return plaintext in this direct result."
     ),
     "parameters": {
         "type": "object",
@@ -170,7 +170,10 @@ def resolve_payload(
             raise ConfigurationError(
                 "phoenix_resolve is disabled",
                 code="PHOENIX_RESOLVE_DISABLED",
-                remediation="Set plugins.entries.phoenix.enable_resolve to true and restart Hermes only if plaintext model-visible resolution is acceptable.",
+                remediation=(
+                    "Set plugins.entries.phoenix.enable_resolve to true and restart Hermes only after "
+                    "reviewing the configured sealed or explicitly unsealed resolution behavior."
+                ),
             )
         caller = caller_from_kwargs(config.profile_name, tool="phoenix_resolve", kwargs=kwargs)
         result = PhoenixClient(config).resolve(refs, caller=caller)
