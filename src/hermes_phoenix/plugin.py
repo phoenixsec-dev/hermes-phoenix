@@ -25,6 +25,7 @@ from .tools import (
 )
 
 logger = logging.getLogger(__name__)
+_secret_source_unavailable_logged = False
 
 
 def register(ctx: Any) -> None:
@@ -84,6 +85,11 @@ def register(ctx: Any) -> None:
             return result
         return scrub.scrub(result)
 
+    def register_secret_source() -> None:
+        from .secret_source import make_phoenix_secret_source
+
+        ctx.register_secret_source(make_phoenix_secret_source(config_loader))
+
     registrations = [
         (
             "phoenix_status tool",
@@ -135,6 +141,20 @@ def register(ctx: Any) -> None:
             ),
         ),
     ]
+    global _secret_source_unavailable_logged
+    if callable(getattr(ctx, "register_secret_source", None)):
+        registrations.append(
+            (
+                "Phoenix SecretSource",
+                register_secret_source,
+            )
+        )
+    elif not _secret_source_unavailable_logged:
+        logger.info(
+            "Hermes does not expose register_secret_source; Phoenix SecretSource registration was skipped"
+        )
+        _secret_source_unavailable_logged = True
+
     if registration_config is not None and registration_config.enable_resolve:
         registrations.insert(
             2,

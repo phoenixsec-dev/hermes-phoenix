@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from hermes_phoenix.client import CallerContext, PhoenixClient
 from hermes_phoenix.config import load_plugin_config
-from hermes_phoenix.errors import ApiError, ConfigurationError, IdentityError, SealedResponseError
+from hermes_phoenix.errors import (
+    ApiError,
+    ApprovalRequiredError,
+    ConfigurationError,
+    IdentityError,
+    SealedResponseError,
+)
 from hermes_phoenix.scrub import get_scrub_registry
 
 SEAL_PRIVATE_KEY = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="
@@ -96,6 +104,24 @@ def test_status_remains_available_and_reports_invalid_seal_configuration_safely(
     rendered = str(result)
     assert "missing-seal.key" not in rendered
     assert any("fails closed" in note for note in result["notes"])
+
+
+def test_status_with_role_and_invalid_seal_key_uses_bootstrap_and_remains_available(stub_phoenix, tmp_path):
+    client = PhoenixClient(
+        _config(
+            stub_phoenix,
+            tmp_path,
+            role="kit-runtime",
+            seal_mode=True,
+            seal_key_file=str(tmp_path / "missing-seal.key"),
+        )
+    )
+    result = client.status(caller=CallerContext(profile="kit-main", tool="phoenix_status"))
+    assert result["ok"] is True
+    assert result["seal_configuration"] == {"key": "invalid"}
+    assert stub_phoenix.session_mint_count == 0
+    policy = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/policy/check"))
+    assert policy["headers"]["Authorization"] == "Bearer test-bootstrap-token"
 
 
 def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_path, monkeypatch):
@@ -368,7 +394,96 @@ def test_redirects_are_not_followed(stub_phoenix, tmp_path):
     assert not any(item["path"].startswith("/redirect-target") for item in stub_phoenix.requests)
 
 
-def test_role_config_fails_closed(stub_phoenix, tmp_path):
+def test_role_session_mints_once_and_reuses_in_memory_token(stub_phoenix, tmp_path):
     config = _config(stub_phoenix, tmp_path, role="kit-runtime")
-    with pytest.raises(ConfigurationError, match="not implemented"):
-        PhoenixClient(config)
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    assert stub_phoenix.session_mint_count == 1
+    assert stub_phoenix.session_renew_count == 0
+    list_requests = [item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/")]
+    assert [item["headers"]["Authorization"] for item in list_requests] == [
+        "Bearer phxs_synthetic-1",
+        "Bearer phxs_synthetic-1",
+    ]
+
+
+def test_sealed_role_session_binds_and_reuses_public_key(stub_phoenix, tmp_path):
+    seal_key = tmp_path / "seal.key"
+    seal_key.write_text(SEAL_PRIVATE_KEY)
+    seal_key.chmod(0o600)
+    config = _config(
+        stub_phoenix,
+        tmp_path,
+        role="kit-runtime",
+        seal_mode=True,
+        seal_key_file=str(seal_key),
+    )
+    result = PhoenixClient(config).resolve(
+        ["calendar/password"],
+        caller=CallerContext(profile="kit-main", tool="phoenix_resolve"),
+    )
+    assert result["mode"] == "sealed"
+    mint = next(item for item in stub_phoenix.requests if item["path"] == "/v1/session/mint")
+    resolve = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve")
+    expected = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
+    assert mint["body"]["seal_public_key"] == expected
+    assert resolve["headers"]["X-Phoenix-Seal-Key"] == expected
+    assert resolve["headers"]["Authorization"] == "Bearer phxs_synthetic-1"
+
+
+def test_role_session_renews_near_expiry_and_registers_token_scrubbing(stub_phoenix, tmp_path):
+    stub_phoenix.session_ttl_seconds = 60
+    config = _config(stub_phoenix, tmp_path, role="kit-runtime")
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    assert stub_phoenix.session_mint_count == 1
+    assert stub_phoenix.session_renew_count == 1
+    assert get_scrub_registry().scrub("phxs_renewed-1") == (
+        "[PHOENIX-SCRUBBED:kit-main-phoenix-session]"
+    )
+
+
+def test_expired_role_session_is_reminted(stub_phoenix, tmp_path, monkeypatch):
+    import hermes_phoenix.session as session_module
+
+    now = [datetime.now(UTC)]
+    monkeypatch.setattr(session_module, "_utcnow", lambda: now[0])
+    config = _config(stub_phoenix, tmp_path, role="kit-runtime")
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    now[0] += timedelta(hours=2)
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    assert stub_phoenix.session_mint_count == 2
+    assert stub_phoenix.session_renew_count == 0
+
+
+def test_role_session_approval_required_fails_closed_without_polling(stub_phoenix, tmp_path):
+    config = _config(stub_phoenix, tmp_path, role="approval-role")
+    with pytest.raises(ApprovalRequiredError) as caught:
+        PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    payload = caught.value.to_payload().as_dict()
+    assert payload["type"] == "approval_required"
+    assert payload["code"] == "PHOENIX_APPROVAL_REQUIRED"
+    assert payload["approval_id"] == "apr_synthetic"
+    assert "does not poll" in payload["remediation"]
+    assert not any(item["path"].startswith("/v1/approval/") for item in stub_phoenix.requests)
+
+
+def test_role_session_mint_and_renewal_denials_do_not_leak_tokens_or_server_text(stub_phoenix, tmp_path):
+    denied_config = _config(stub_phoenix, tmp_path, role="denied-role")
+    with pytest.raises(ApiError) as mint_caught:
+        PhoenixClient(denied_config).list(caller=CallerContext(profile="kit-main"))
+    mint_payload = str(mint_caught.value.to_payload().as_dict())
+    assert mint_caught.value.code == "PHOENIX_SESSION_MINT_DENIED"
+    assert "secret-looking" not in mint_payload
+    assert "test-bootstrap-token" not in mint_payload
+
+    stub_phoenix.session_ttl_seconds = 60
+    config = _config(stub_phoenix, tmp_path, role="renew-denied-role")
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    stub_phoenix.deny_session_renewal = True
+    with pytest.raises(ApiError) as renew_caught:
+        PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    renew_payload = str(renew_caught.value.to_payload().as_dict())
+    assert renew_caught.value.code == "PHOENIX_SESSION_RENEW_DENIED"
+    assert "secret-looking" not in renew_payload
+    assert "phxs_" not in renew_payload

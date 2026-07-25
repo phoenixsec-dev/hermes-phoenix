@@ -19,10 +19,13 @@ The current foundation includes:
 - strict X25519 seal-key and envelope validation; the plugin never decrypts
 - process-local value-aware scrubbing for terminal and generic tool results
 - runtime bearer and Path A spec-derived environment registration
-- fail-closed token-file validation and identity-fingerprint groundwork
-- offline tests against a stub Phoenix server
+- fail-closed token/seal/mTLS-key identity validation and `verify --all-profiles` duplicate checks
+- process-local non-step-up role session mint/renewal
+- Hermes SecretSource API v1 registration with no plaintext disk cache
+- machine-readable `hermes phoenix verify`
+- offline stub-server tests plus an optional real-Phoenix integration tier
 
-Cross-profile identity deduplication, role-scoped session minting, SecretSource registration, `hermes phoenix verify`, and the real-server integration tier are deferred to B5.
+Phoenix-core capture of the emitted `X-Hermes-*` audit metadata remains a coordinated server-side release item. The plugin sends the headers today, but Phoenix v0.15.2 ignores that family until the coordinated server release lands.
 
 ## Security posture
 
@@ -37,7 +40,8 @@ Cross-profile identity deduplication, role-scoped session minting, SecretSource 
 - Sealed HTTP 200 responses must contain complete, matching envelopes. Plaintext is discarded and missing/malformed envelopes fail closed.
 - Seal private keys are owner-only regular non-symlink files containing standard-base64 encoded 32-byte X25519 keys. The plugin derives the public key with PyNaCl and never decrypts an envelope.
 - Output scrub values exist only in process memory. The plugin writes no secret or scrub cache.
-- Role-scoped runtime session minting remains deliberately fail-closed until B5.
+- Configured non-step-up roles mint and renew scoped `phxs_` sessions in memory only. Step-up/approval-required roles return a structured failure and never poll or block.
+- Persistent profile token files may never contain `phxs_` session tokens.
 
 Path A bootstrap injection (`phoenix env-exec`) is a separate Phoenix CLI feature. This repository implements only the Path B Hermes runtime plugin.
 
@@ -59,6 +63,7 @@ plugins:
     phoenix:
       server: "https://192.168.0.118:9090"
       token_file: "~/.config/phoenix/token-my-profile"
+      role: "hermes-my-profile-runtime"  # optional non-step-up role
       ca_file: "~/.config/phoenix/ca.crt"
       default_namespace: "services/hermes/my-profile"
       timeout_seconds: 10
@@ -122,11 +127,43 @@ Scrubbing is defense in depth, not secret isolation: it cannot remove a value fr
 
 ## Diagnostics and CLI exit status
 
-`hermes phoenix status` prints JSON. Treat its top-level `"ok"` field as the machine-readable result.
+`hermes phoenix status` and `hermes phoenix verify` print JSON. Verify validates config, health/authentication, refs from `spec_path` and `secrets.phoenix.env`, default-namespace visibility, and the sealed dry-run handshake without printing resolved values. `--all-profiles` inspects only the default Hermes config and direct valid sibling `profiles/<name>/config.yaml` files, then fails closed on unreadable/insecure or duplicate token/seal/mTLS-key identity material without printing fingerprints or credential paths.
 
-Hermes v0.18.2 discards plugin CLI handler return codes, so the process may exit with status 0 even when the printed Phoenix payload has `"ok": false`. The plugin cannot correct that host behavior.
+Hermes v0.18.2 discards plugin CLI handler return codes, so the printed top-level `"ok"` field—not the process exit status—is authoritative for both commands.
 
-Configured `scrub.*`, `seal_key_file`, `seal_mode`, and `spec_path` are functional in B4. Configured `role` remains a B5 option and runtime operations fail closed with a warning until in-memory role sessions land.
+## Phoenix SecretSource
+
+On Hermes versions exposing SecretSource API v1, the plugin registers:
+
+```yaml
+secrets:
+  phoenix:
+    enabled: true
+    env:
+      NEXTCLOUD_CALDAV_APP_PASSWORD: "phoenix://services/my-profile/caldav-password"
+    timeout_seconds: 20
+    override_existing: false
+```
+
+The source is named `phoenix`, has mapped shape and `phoenix://` scheme, reuses the hardened profile identity/client, and registers fetched plaintext with the scrubber. `fetch()` never prompts or raises. It performs no disk or value cache under any circumstances.
+
+SecretSource intentionally requests plaintext because Hermes injects usable environment values and this plugin never decrypts envelopes. A Phoenix policy or role that requires sealed responses will therefore fail this source closed; use a separate unsealed least-privilege identity/role for SecretSource if needed.
+
+Plugin registration occurs after the discovering process's initial environment load. Therefore SecretSource **does not replace Path A** for the gateway process that discovers the plugin. It supplies subsequently spawned Hermes processes and re-pulls; Path A remains the bootstrap plane, SecretSource is startup-time mapped child-process injection, and runtime tools are the agent-initiated plane.
+
+## Role sessions
+
+When `role` is configured, the secure token file or mTLS identity is used only to mint a scoped session. Session tokens and expiry are kept in a lock-protected process-memory cache, renewed near expiry, and never written to disk. Expired sessions re-mint. Mint/renew denial fails closed without falling back to broader bootstrap access for that operation. Approval-required roles return `PHOENIX_APPROVAL_REQUIRED` (with a safe approval id/expiry when valid) and never perform blocking approval polling.
+
+## Integration tests
+
+The default `pytest` tier is offline and excludes `integration`. Run the real-server tier with:
+
+```bash
+python3 -m pytest -q -m integration
+```
+
+Set `PHOENIX_SERVER_BIN` and optionally `PHOENIX_CLI_BIN` for prebuilt binaries, or provide `PHOENIX_SRC` plus a runnable Go toolchain. The harness builds only into a temporary directory, uses localhost/synthetic values/throwaway state, and never modifies the Phoenix checkout. It skips cleanly when requirements are unavailable; set `PHOENIX_INTEGRATION_REQUIRED=1` to turn unavailability into failure.
 
 ## Directory-plugin install
 

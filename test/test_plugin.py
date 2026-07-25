@@ -27,6 +27,15 @@ class FakeContext:
         self.hooks.append((name, callback))
 
 
+class SecretSourceContext(FakeContext):
+    def __init__(self):
+        super().__init__()
+        self.secret_sources = []
+
+    def register_secret_source(self, source):
+        self.secret_sources.append(source)
+
+
 def _registration_config(*, enable_resolve=False, warnings=(), **extra):
     return SimpleNamespace(
         enable_resolve=enable_resolve,
@@ -64,6 +73,27 @@ def test_seal_mode_does_not_implicitly_register_resolve(monkeypatch):
     ctx = FakeContext()
     plugin.register(ctx)
     assert "phoenix_resolve" not in [item["name"] for item in ctx.tools]
+
+
+def test_register_secret_source_is_feature_detected(monkeypatch):
+    monkeypatch.setattr(plugin, "load_plugin_config", lambda **_kwargs: _registration_config())
+    sentinel = object()
+    monkeypatch.setattr(
+        "hermes_phoenix.secret_source.make_phoenix_secret_source",
+        lambda _loader: sentinel,
+    )
+    ctx = SecretSourceContext()
+    plugin.register(ctx)
+    assert ctx.secret_sources == [sentinel]
+
+
+def test_missing_secret_source_api_logs_once(monkeypatch, caplog):
+    monkeypatch.setattr(plugin, "load_plugin_config", lambda **_kwargs: _registration_config())
+    monkeypatch.setattr(plugin, "_secret_source_unavailable_logged", False)
+    with caplog.at_level("INFO"):
+        plugin.register(FakeContext())
+        plugin.register(FakeContext())
+    assert caplog.text.count("SecretSource registration was skipped") == 1
 
 
 def test_register_logs_inactive_configuration_warnings(monkeypatch, caplog):

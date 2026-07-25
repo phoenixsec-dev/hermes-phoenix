@@ -224,10 +224,6 @@ def load_plugin_config(
     warnings: list[str] = []
     if source.get("ca_cert"):
         warnings.append("ca_cert is a deprecated alias; use ca_file instead.")
-    if role:
-        warnings.append(
-            "role is inactive until the B5 in-memory session phase; runtime operations fail closed."
-        )
 
     return PluginConfig(
         server=server,

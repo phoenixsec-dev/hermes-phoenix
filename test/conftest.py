@@ -3,25 +3,33 @@ from __future__ import annotations
 import base64
 import json
 import threading
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
 
 from hermes_phoenix.scrub import get_scrub_registry
+from hermes_phoenix.session import ROLE_SESSIONS
 
 
 @pytest.fixture(autouse=True)
 def reset_scrub_registry():
     registry = get_scrub_registry()
     registry.reset_for_tests()
+    ROLE_SESSIONS.reset_for_tests()
     yield
     registry.reset_for_tests()
+    ROLE_SESSIONS.reset_for_tests()
 
 
 class StubPhoenix:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
+        self.session_mint_count = 0
+        self.session_renew_count = 0
+        self.session_ttl_seconds = 3600
+        self.deny_session_renewal = False
         self.list_payload: dict[str, Any] = {
             "paths": [
                 "services/hermes/kit-main/calendar/password",
@@ -72,7 +80,50 @@ class StubPhoenix:
                 except json.JSONDecodeError:
                     body = None
                 owner.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
-                if self.path.startswith("/v1/resolve") and isinstance(body, dict):
+                if self.path == "/v1/session/mint" and isinstance(body, dict):
+                    role = body.get("role")
+                    if role == "approval-role":
+                        self._reply(
+                            202,
+                            {
+                                "status": "approval_required",
+                                "approval_id": "apr_synthetic",
+                                "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+                            },
+                        )
+                    elif role == "denied-role":
+                        self._reply(403, {"error": "secret-looking denial detail"})
+                    elif self.headers.get("Authorization") == "Bearer test-bootstrap-token":
+                        owner.session_mint_count += 1
+                        self._reply(
+                            200,
+                            {
+                                "session_token": f"phxs_synthetic-{owner.session_mint_count}",
+                                "role": role,
+                                "expires_at": (
+                                    datetime.now(UTC) + timedelta(seconds=owner.session_ttl_seconds)
+                                ).isoformat(),
+                            },
+                        )
+                    else:
+                        self._reply(401, {"error": "secret-looking bootstrap failure"})
+                elif self.path == "/v1/session/renew" and isinstance(body, dict):
+                    if owner.deny_session_renewal:
+                        self._reply(403, {"error": "secret-looking renewal denial"})
+                    elif str(self.headers.get("Authorization", "")).startswith("Bearer phxs_"):
+                        owner.session_renew_count += 1
+                        self._reply(
+                            200,
+                            {
+                                "session_token": f"phxs_renewed-{owner.session_renew_count}",
+                                "expires_at": (
+                                    datetime.now(UTC) + timedelta(hours=1)
+                                ).isoformat(),
+                            },
+                        )
+                    else:
+                        self._reply(403, {"error": "secret-looking renewal failure"})
+                elif self.path.startswith("/v1/resolve") and isinstance(body, dict):
                     refs = body.get("refs", [])
                     errors = (
                         {"phoenix://services/hermes/kit-main/missing": "secret-looking server diagnostic"}

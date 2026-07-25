@@ -47,7 +47,7 @@ def test_config_expands_home_in_ca_file(tmp_path, monkeypatch):
     assert config.ca_file == tmp_path / ".config/phoenix/ca.pem"
 
 
-def test_config_treats_b4_options_as_functional_and_warns_only_for_b5_role(tmp_path):
+def test_config_treats_b4_and_b5_role_options_as_functional(tmp_path):
     config = load_plugin_config(
         raw={
             "server": "https://phoenix.example:9090",
@@ -63,7 +63,7 @@ def test_config_treats_b4_options_as_functional_and_warns_only_for_b5_role(tmp_p
     rendered = " ".join(config.configuration_warnings)
     assert "B4" not in rendered
     assert "spec_path" not in rendered
-    assert "B5 in-memory session" in rendered
+    assert "role" not in rendered
 
 
 def test_config_supports_mtls_without_bearer(tmp_path):

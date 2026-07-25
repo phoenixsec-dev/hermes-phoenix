@@ -14,6 +14,8 @@ class ErrorPayload:
     code: str | None = None
     detail: str | None = None
     remediation: str | None = None
+    approval_id: str | None = None
+    expires_at: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -23,6 +25,8 @@ class ErrorPayload:
             **({"code": self.code} if self.code else {}),
             **({"detail": self.detail} if self.detail else {}),
             **({"remediation": self.remediation} if self.remediation else {}),
+            **({"approval_id": self.approval_id} if self.approval_id else {}),
+            **({"expires_at": self.expires_at} if self.expires_at else {}),
         }
 
 
@@ -39,11 +43,15 @@ class PhoenixPluginError(Exception):
         code: str | None = None,
         detail: str | None = None,
         remediation: str | None = None,
+        approval_id: str | None = None,
+        expires_at: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.detail = detail
         self.remediation = remediation
+        self.approval_id = approval_id
+        self.expires_at = expires_at
 
     def to_payload(self) -> ErrorPayload:
         return ErrorPayload(
@@ -53,6 +61,8 @@ class PhoenixPluginError(Exception):
             code=self.code,
             detail=self.detail,
             remediation=self.remediation,
+            approval_id=self.approval_id,
+            expires_at=self.expires_at,
         )
 
 
@@ -82,3 +92,7 @@ class ApiError(PhoenixPluginError):
 
 class SealedResponseError(ApiError):
     error_type = "sealed_response_error"
+
+
+class ApprovalRequiredError(ApiError):
+    error_type = "approval_required"

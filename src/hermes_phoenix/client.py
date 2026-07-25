@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import ssl
@@ -9,13 +10,21 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from .config import PluginConfig
-from .errors import ApiError, ConfigurationError, NetworkError, SealedResponseError
+from .errors import (
+    ApiError,
+    ApprovalRequiredError,
+    ConfigurationError,
+    NetworkError,
+    SealedResponseError,
+)
 from .identity import fingerprint_runtime_token, read_runtime_token, validate_private_key_file
 from .refs import normalize_list_prefix, normalize_ref
 from .scrub import get_scrub_registry
+from .session import ROLE_SESSIONS, RoleSession, RoleSessionKey
 from .seal import (
     SealedEnvelopeValidationError,
     build_seal_header,
@@ -25,6 +34,8 @@ from .seal import (
 
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_RUNTIME_AUTH = object()
 
 
 @dataclass(frozen=True)
@@ -51,15 +62,12 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 class PhoenixClient:
     def __init__(self, config: PluginConfig) -> None:
         self.config = config
-        if config.role:
-            raise ConfigurationError(
-                "Role-scoped runtime session minting is not implemented in this scaffold",
-                code="PHOENIX_ROLE_NOT_IMPLEMENTED",
-                remediation="Unset role for direct bootstrap-identity use until role session support lands.",
-            )
         self._identity_fingerprint = (
             fingerprint_runtime_token(config.token_file) if config.token_file is not None else None
         )
+        if self._identity_fingerprint is None:
+            mtls_identity = f"{config.client_cert or ''}\0{config.client_key or ''}"
+            self._identity_fingerprint = hashlib.sha256(mtls_identity.encode("utf-8")).hexdigest()
         if config.token_file is not None:
             get_scrub_registry().register(
                 read_runtime_token(config.token_file),
@@ -95,10 +103,17 @@ class PhoenixClient:
             _NoRedirectHandler(),
         )
 
-    def _headers(self, caller: CallerContext) -> dict[str, str]:
+    def _bootstrap_token(self) -> str | None:
+        if self.config.token_file is None:
+            return None
+        token = read_runtime_token(self.config.token_file)
+        get_scrub_registry().register(token, name=f"{self.config.profile_name}-phoenix-token")
+        return token
+
+    def _headers(self, caller: CallerContext, authorization_token: str | None) -> dict[str, str]:
         headers = {"Accept": "application/json"}
-        if self.config.token_file:
-            headers["Authorization"] = f"Bearer {read_runtime_token(self.config.token_file)}"
+        if authorization_token:
+            headers["Authorization"] = f"Bearer {authorization_token}"
         values = {
             "X-Hermes-Profile": caller.profile,
             "X-Hermes-Session-Id": caller.session_id,
@@ -113,6 +128,121 @@ class PhoenixClient:
                 headers[key] = sanitized
         return headers
 
+    @staticmethod
+    def _parse_expiry(value: Any) -> datetime:
+        if not isinstance(value, str) or len(value) > 64:
+            raise ApiError("Phoenix session response was invalid", status=200, code="PHOENIX_SESSION_RESPONSE_INVALID")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ApiError("Phoenix session response was invalid", status=200, code="PHOENIX_SESSION_RESPONSE_INVALID") from exc
+        if parsed.tzinfo is None:
+            raise ApiError("Phoenix session response was invalid", status=200, code="PHOENIX_SESSION_RESPONSE_INVALID")
+        parsed = parsed.astimezone(UTC)
+        if parsed <= datetime.now(UTC):
+            raise ApiError("Phoenix session response was already expired", status=200, code="PHOENIX_SESSION_EXPIRED")
+        return parsed
+
+    def _parse_role_session(self, payload: Mapping[str, Any]) -> RoleSession:
+        token = payload.get("session_token")
+        if (
+            not isinstance(token, str)
+            or not token.startswith("phxs_")
+            or len(token) > 64 * 1024
+            or "\n" in token
+            or "\r" in token
+        ):
+            raise ApiError("Phoenix session response was invalid", status=200, code="PHOENIX_SESSION_RESPONSE_INVALID")
+        response_role = payload.get("role")
+        if response_role is not None and response_role != self.config.role:
+            raise ApiError("Phoenix session response role did not match", status=200, code="PHOENIX_SESSION_RESPONSE_INVALID")
+        expires_at = self._parse_expiry(payload.get("expires_at"))
+        get_scrub_registry().register(token, name=f"{self.config.profile_name}-phoenix-session")
+        return RoleSession(token=token, expires_at=expires_at)
+
+    def _mint_role_session(self, caller: CallerContext, seal_public_key: str) -> RoleSession:
+        assert self.config.role is not None
+        body = {"role": self.config.role}
+        if seal_public_key:
+            body["seal_public_key"] = seal_public_key
+        try:
+            payload = self._request_json(
+                "POST",
+                "/v1/session/mint",
+                caller=caller,
+                body=body,
+                authorization=self._bootstrap_token(),
+                accepted_statuses=frozenset({200, 202}),
+            )
+        except ApiError as exc:
+            raise ApiError(
+                "Phoenix role session mint was denied",
+                status=exc.status,
+                code="PHOENIX_SESSION_MINT_DENIED",
+                remediation="Check the configured role, bootstrap trust, attestation, and Phoenix audit log.",
+            ) from exc
+        if payload.get("status") == "approval_required":
+            approval_id = payload.get("approval_id")
+            raw_approval_expiry = payload.get("expires_at")
+            try:
+                expires_at = self._parse_expiry(raw_approval_expiry).isoformat().replace("+00:00", "Z")
+            except ApiError:
+                expires_at = None
+            raise ApprovalRequiredError(
+                "Phoenix role requires operator approval",
+                status=202,
+                code="PHOENIX_APPROVAL_REQUIRED",
+                remediation=(
+                    "Approve or deny the request through an operator-controlled Phoenix surface, then retry. "
+                    "The Hermes plugin does not poll or block for approval."
+                ),
+                approval_id=(approval_id if isinstance(approval_id, str) and _SAFE_ID_RE.fullmatch(approval_id) else None),
+                expires_at=expires_at,
+            )
+        return self._parse_role_session(payload)
+
+    def _renew_role_session(
+        self,
+        caller: CallerContext,
+        current: RoleSession,
+        seal_public_key: str,
+    ) -> RoleSession:
+        headers = {"X-Phoenix-Seal-Key": seal_public_key} if seal_public_key else None
+        try:
+            payload = self._request_json(
+                "POST",
+                "/v1/session/renew",
+                caller=caller,
+                body={},
+                request_headers=headers,
+                authorization=current.token,
+            )
+        except ApiError as exc:
+            raise ApiError(
+                "Phoenix role session renewal was denied",
+                status=exc.status,
+                code="PHOENIX_SESSION_RENEW_DENIED",
+                remediation="Retry after checking role policy, attestation, session expiry, and Phoenix audit records.",
+            ) from exc
+        return self._parse_role_session(payload)
+
+    def _runtime_authorization(self, caller: CallerContext, seal_public_key: str) -> str | None:
+        if not self.config.role:
+            return self._bootstrap_token()
+        key = RoleSessionKey(
+            server=self.config.server,
+            profile=self.config.profile_name,
+            role=self.config.role,
+            identity=self._identity_fingerprint,
+            seal_public_key=seal_public_key,
+        )
+        session = ROLE_SESSIONS.acquire(
+            key,
+            mint=lambda: self._mint_role_session(caller, seal_public_key),
+            renew=lambda current: self._renew_role_session(caller, current, seal_public_key),
+        )
+        return session.token
+
     def _request_json(
         self,
         method: str,
@@ -122,12 +252,21 @@ class PhoenixClient:
         query: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
         request_headers: Mapping[str, str] | None = None,
+        authorization: str | None | object = _RUNTIME_AUTH,
+        role_seal_public_key: str = "",
+        accepted_statuses: frozenset[int] = frozenset({200}),
     ) -> Mapping[str, Any]:
         url = f"{self.config.server}{path}"
         if query:
             url = f"{url}?{urllib.parse.urlencode(query)}"
         body_bytes = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = self._headers(caller)
+        authorization_token = (
+            self._runtime_authorization(caller, role_seal_public_key)
+            if authorization is _RUNTIME_AUTH
+            else authorization
+        )
+        assert authorization_token is None or isinstance(authorization_token, str)
+        headers = self._headers(caller, authorization_token)
         if request_headers:
             headers.update(request_headers)
         if body_bytes is not None:
@@ -152,7 +291,19 @@ class PhoenixClient:
                 code=code,
                 remediation="Check Phoenix server logs and audit records for safe diagnostic detail.",
             ) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except TimeoutError as exc:
+            raise NetworkError(
+                "Phoenix request timed out",
+                code="PHOENIX_TIMEOUT",
+                remediation="Check Phoenix health, the network path, and configured timeout_seconds.",
+            ) from exc
+        except (urllib.error.URLError, OSError) as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise NetworkError(
+                    "Phoenix request timed out",
+                    code="PHOENIX_TIMEOUT",
+                    remediation="Check Phoenix health, the network path, and configured timeout_seconds.",
+                ) from exc
             raise NetworkError(
                 "Could not reach Phoenix",
                 code="PHOENIX_UNREACHABLE",
@@ -162,7 +313,7 @@ class PhoenixClient:
 
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise ApiError("Phoenix response exceeded the size limit", status=status, code="PHOENIX_RESPONSE_TOO_LARGE")
-        if status != 200:
+        if status not in accepted_statuses:
             raise ApiError(
                 f"Phoenix request returned HTTP {status}",
                 status=status,
@@ -183,13 +334,20 @@ class PhoenixClient:
         return payload
 
     def health(self, *, caller: CallerContext) -> Mapping[str, Any]:
-        return self._request_json("GET", "/v1/health", caller=caller)
+        return self._request_json("GET", "/v1/health", caller=caller, authorization=None)
 
-    def check_auth(self, *, caller: CallerContext) -> None:
+    def check_auth(self, *, caller: CallerContext, use_bootstrap: bool = False) -> None:
         # /v1/policy/check authenticates every valid identity before returning
         # the policy decision. A 200 with allowed=false is still a successful
         # auth probe for a least-privilege identity that lacks this sentinel
         # path; 401/403 means the credentials themselves were rejected.
+        role_seal_public_key = ""
+        request_headers: dict[str, str] | None = None
+        if self.config.role and self.config.seal_mode and not use_bootstrap:
+            if self.config.seal_key_file is None:
+                raise ConfigurationError("seal_mode requires seal_key_file", code="PHOENIX_SEAL_KEY_INVALID")
+            role_seal_public_key = build_seal_header(self.config.seal_key_file)
+            request_headers = {"X-Phoenix-Seal-Key": role_seal_public_key}
         self._request_json(
             "GET",
             "/v1/policy/check",
@@ -198,6 +356,9 @@ class PhoenixClient:
                 "path": f"{self.config.default_namespace}/startup-preflight-auth-probe",
                 "check": "allow_unseal",
             },
+            request_headers=request_headers,
+            authorization=self._bootstrap_token() if use_bootstrap else _RUNTIME_AUTH,
+            role_seal_public_key=role_seal_public_key,
         )
 
     def list(self, prefix: str | None = None, *, caller: CallerContext) -> dict[str, Any]:
@@ -209,10 +370,19 @@ class PhoenixClient:
         )
         if encoded_prefix:
             encoded_prefix += "/"
+        role_seal_public_key = ""
+        request_headers: dict[str, str] | None = None
+        if self.config.role and self.config.seal_mode:
+            if self.config.seal_key_file is None:
+                raise ConfigurationError("seal_mode requires seal_key_file", code="PHOENIX_SEAL_KEY_INVALID")
+            role_seal_public_key = build_seal_header(self.config.seal_key_file)
+            request_headers = {"X-Phoenix-Seal-Key": role_seal_public_key}
         payload = self._request_json(
             "GET",
             f"/v1/secrets/{encoded_prefix}",
             caller=caller,
+            request_headers=request_headers,
+            role_seal_public_key=role_seal_public_key,
         )
         raw_paths = payload.get("paths")
         if raw_paths is None:
@@ -256,16 +426,21 @@ class PhoenixClient:
         *,
         caller: CallerContext,
         dry_run: bool = False,
+        sealed: bool | None = None,
     ) -> dict[str, Any]:
         normalized_refs = [normalize_ref(ref, self.config.default_namespace) for ref in refs]
+        effective_sealed = self.config.seal_mode if sealed is None else sealed
         request_headers: dict[str, str] = {}
-        if self.config.seal_mode:
+        if effective_sealed:
             if self.config.seal_key_file is None:
                 raise ConfigurationError(
                     "seal_mode requires seal_key_file",
                     code="PHOENIX_SEAL_KEY_INVALID",
                 )
             request_headers["X-Phoenix-Seal-Key"] = build_seal_header(self.config.seal_key_file)
+        role_seal_public_key = (
+            request_headers.get("X-Phoenix-Seal-Key", "") if self.config.role else ""
+        )
         payload = self._request_json(
             "POST",
             "/v1/resolve",
@@ -273,6 +448,7 @@ class PhoenixClient:
             query={"dry_run": "true"} if dry_run else None,
             body={"refs": normalized_refs},
             request_headers=request_headers,
+            role_seal_public_key=role_seal_public_key,
         )
 
         raw_errors = payload.get("errors", {})
@@ -280,19 +456,19 @@ class PhoenixClient:
             isinstance(key, str) and isinstance(value, str)
             for key, value in raw_errors.items()
         ):
-            if self.config.seal_mode and not dry_run:
+            if effective_sealed and not dry_run:
                 raise self._sealed_contract_error("PHOENIX_SEALED_VALUES_INVALID")
             raise ApiError("Phoenix resolve response contained invalid errors", status=200, code="PHOENIX_RESPONSE_INVALID")
 
         requested = set(normalized_refs)
         error_refs = set(raw_errors)
         if not error_refs <= requested:
-            if self.config.seal_mode and not dry_run:
+            if effective_sealed and not dry_run:
                 raise self._sealed_contract_error("PHOENIX_SEALED_VALUES_INVALID")
             raise ApiError("Phoenix resolve response did not match the requested refs", status=200, code="PHOENIX_RESPONSE_INVALID")
         errors = {ref: "Phoenix did not resolve this ref." for ref in raw_errors}
 
-        if self.config.seal_mode and not dry_run:
+        if effective_sealed and not dry_run:
             if "sealed_values" in payload and not isinstance(payload.get("sealed_values"), dict):
                 raise self._sealed_contract_error("PHOENIX_SEALED_VALUES_INVALID")
             raw_sealed_values = payload.get("sealed_values", {})
@@ -347,7 +523,9 @@ class PhoenixClient:
                 seal_key_status = "invalid"
 
         raw_health = self.health(caller=caller)
-        self.check_auth(caller=caller)
+        # Status remains usable even when a role-bound seal key is broken: it
+        # validates the configured bootstrap identity and reports seal state.
+        self.check_auth(caller=caller, use_bootstrap=True)
         reported_status = raw_health.get("status")
         health_status = (
             reported_status
@@ -363,6 +541,10 @@ class PhoenixClient:
             notes.append("Phoenix seal key configuration is invalid; sealed resolve fails closed.")
         elif self.config.seal_mode:
             notes.append("Phoenix sealed resolve mode is enabled.")
+        if self.config.role:
+            notes.append(
+                "Status validated bootstrap authentication; role session minting is exercised by runtime operations and verify."
+            )
         return {
             "ok": True,
             "server": self.config.server,

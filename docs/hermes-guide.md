@@ -1,0 +1,122 @@
+# Hermes operator guide
+
+## Compatibility
+
+- Hermes: tested against `v2026.7.7.2` / `v0.18.2`.
+- Python: `>=3.11,<3.14`.
+- Phoenix server: `v0.15.2` supplies the status/list/resolve, sealed-response, dry-run, and role-session APIs used by the plugin.
+- Full `X-Hermes-*` audit capture requires the coordinated Phoenix release tracked separately from v0.15.2. Older servers ignore those audit hints; they never grant authority.
+
+## Three secret planes
+
+| Plane | Purpose | Timing | Plaintext destination |
+|---|---|---|---|
+| Path A `phoenix env-exec` | Bootstrap the discovering gateway | Before Hermes starts | Gateway environment |
+| Phoenix SecretSource | Mapped startup credentials for subsequently spawned Hermes processes/re-pulls | After plugin registration | Hermes orchestrator environment |
+| Runtime tools | Agent-initiated status/list/resolve | During a session | Opaque tokens in sealed mode; direct tool result in explicitly unsealed mode |
+
+SecretSource registration happens after the discovering process's first environment load. It **does not replace Path A** for that process.
+
+## Profile identity and resolution
+
+```yaml
+plugins:
+  enabled: [phoenix]
+  entries:
+    phoenix:
+      server: "https://phoenix.example:9090"
+      token_file: "~/.config/phoenix/token-kit"
+      role: "hermes-kit-runtime"       # optional, non-step-up
+      ca_file: "~/.config/phoenix/ca.crt"
+      default_namespace: "services/hermes/kit"
+      timeout_seconds: 10
+      enable_resolve: false
+      seal_mode: true
+      seal_key_file: "~/.config/phoenix/seal-kit.key"
+      spec_path: "/etc/hermes/phoenix-env/kit.spec"
+      scrub:
+        enabled: true
+        placeholder: "[PHOENIX-SCRUBBED:{name}]"
+```
+
+`enable_resolve` is plugin-owned and defaults to false. Hermes default-enables unknown plugin toolsets, so toolset configuration is not a safe replacement for this gate. `seal_mode` never registers resolve implicitly.
+
+Token, seal-key, and mTLS private-key files must be owner-only regular non-symlink files. A persistent `token_file` must contain bootstrap material, never a `phxs_` session token.
+
+### Sealed mode
+
+A seal key file contains one standard-base64 encoded 32-byte X25519 private key. The plugin derives the public key with PyNaCl and sends it as `X-Phoenix-Seal-Key`. Successful resolve output is only:
+
+```text
+PHOENIX_SEALED:<base64-envelope-json>
+```
+
+Every envelope must have exact version/algorithm/fields, matching normalized ref/path, a 32-byte ephemeral key, a 24-byte nonce, and valid ciphertext encoding. Plaintext is discarded. Missing or invalid envelopes fail closed. The plugin never decrypts.
+
+### Explicitly unsealed mode
+
+With `seal_mode: false` and `enable_resolve: true`, the direct `phoenix_resolve` response and its session entry contain plaintext by design. Returned values are registered for subsequent output scrubbing. Use only when that exposure is accepted.
+
+## Value-aware scrubbing
+
+The process-local registry stores values of at least eight characters plus standard-base64 and URL-encoded forms. Sources are runtime bearer/session tokens, unsealed resolve/SecretSource values, and current environment values for names in `spec_path`.
+
+The Path A spec is read for names and refs. Literal right-hand-side text is never registered as a value. `transform_terminal_output` and `transform_tool_result` return transformed strings before model/session-context delivery; the direct `phoenix_resolve` result is intentionally exempt.
+
+Scrubbing cannot remove secrets from raw subprocess environments, historical output, files, arbitrary encodings, external logs, or the direct unsealed result. Keep Hermes regex redaction enabled. No registry contents are exposed by a tool or persisted.
+
+## SecretSource
+
+```yaml
+secrets:
+  phoenix:
+    enabled: true
+    env:
+      NEXTCLOUD_CALDAV_APP_PASSWORD: "phoenix://services/kit/caldav-password"
+    timeout_seconds: 20
+    override_existing: false
+```
+
+The source follows `SECRET_SOURCE_API_VERSION == 1` exactly (`name=phoenix`, label `Phoenix Secrets Manager`, mapped shape, `phoenix` scheme). `fetch()` never raises or prompts and returns Hermes `FetchResult`/`ErrorKind` outcomes. The host orchestrator enforces its wall-clock timeout and applies precedence.
+
+There is **no plaintext disk cache**. SecretSource explicitly asks Phoenix for plaintext because Hermes needs usable environment values and this plugin never decrypts. A `require_sealed` policy/role therefore rejects SecretSource; use a separate least-privilege unsealed identity/role where needed.
+
+On older Hermes versions without `register_secret_source`, the plugin skips this feature with one informational log.
+
+## Role sessions
+
+A configured non-step-up role mints via `/v1/session/mint`. The bootstrap token or mTLS identity is not used for subsequent runtime requests. Scoped session tokens and RFC3339 expiry live only in a process-memory cache; near-expiry sessions renew, expired sessions re-mint, and no session cache file exists.
+
+Mint or renewal denial fails closed. HTTP 202 approval-required responses produce structured `PHOENIX_APPROVAL_REQUIRED` output with a safe approval id/expiry when valid. The plugin never prompts, polls, or blocks for approval. Step-up roles must be handled by an operator outside Hermes and retried.
+
+## Verification
+
+```bash
+hermes phoenix status
+hermes phoenix verify
+hermes phoenix verify --all-profiles
+```
+
+Verify checks config, health, authentication/role mint, Path A and SecretSource refs through `POST /v1/resolve?dry_run=true`, sealed handshake, and default-namespace visibility. It prints refs and counts, never values or visible paths.
+
+`--all-profiles` visits only the default config and direct valid sibling profile configs. It fingerprints token contents, seal public keys, and mTLS private-key material internally; it fails on duplicate/unreadable/insecure material and reports profile names rather than credential paths/fingerprints.
+
+Hermes v0.18.2 discards plugin CLI return codes. The printed top-level `ok` field is authoritative.
+
+## Integration tier
+
+```bash
+python3 -m pytest -q                  # offline
+python3 -m pytest -q -m integration   # real Phoenix or clean skip
+```
+
+Provide `PHOENIX_SERVER_BIN`/`PHOENIX_CLI_BIN`, or a read-only `PHOENIX_SRC` with a runnable Go toolchain. Builds, state, credentials, and synthetic values live in throwaway directories. The harness binds localhost and cleans up child processes. Set `PHOENIX_INTEGRATION_REQUIRED=1` when a skip should fail CI.
+
+## Troubleshooting
+
+- `PHOENIX_RESOLVE_DISABLED`: set `enable_resolve: true` only after choosing sealed or accepted-unsealed behavior, then restart Hermes.
+- `PHOENIX_SEAL_KEY_INVALID`: fix the owner-only key file and registered public key.
+- `PHOENIX_SEALED_VALUES_MISSING` / `INVALID`: server/plugin sealed contract mismatch; no plaintext was accepted.
+- `PHOENIX_APPROVAL_REQUIRED`: operator action is required; the plugin will not poll.
+- `PHOENIX_DUPLICATE_IDENTITY_MATERIAL`: issue unique token and seal material per profile.
+- SecretSource `timeout`/`network`/`auth_failed`: use `hermes phoenix verify`, then inspect safe Phoenix audit/server logs.

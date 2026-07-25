@@ -86,3 +86,10 @@ def validate_private_key_file(path: Path) -> None:
     data = _read_secure_bytes(path, label="Phoenix mTLS private key")
     if not data.strip():
         raise IdentityError("Phoenix mTLS private key is empty", code="PHOENIX_IDENTITY_FILE_INVALID")
+
+
+def fingerprint_private_key_file(path: Path) -> str:
+    data = _read_secure_bytes(path, label="Phoenix mTLS private key")
+    if not data.strip():
+        raise IdentityError("Phoenix mTLS private key is empty", code="PHOENIX_IDENTITY_FILE_INVALID")
+    return hashlib.sha256(data).hexdigest()

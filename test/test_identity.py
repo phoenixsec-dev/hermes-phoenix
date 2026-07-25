@@ -5,7 +5,12 @@ import os
 import pytest
 
 from hermes_phoenix.errors import IdentityError
-from hermes_phoenix.identity import fingerprint_runtime_token, read_runtime_token, validate_private_key_file
+from hermes_phoenix.identity import (
+    fingerprint_private_key_file,
+    fingerprint_runtime_token,
+    read_runtime_token,
+    validate_private_key_file,
+)
 
 
 def test_reads_owner_only_bootstrap_token(tmp_path):
@@ -56,3 +61,6 @@ def test_private_key_validation_accepts_multiline_pem(tmp_path):
     path.write_text("-----BEGIN PRIVATE KEY-----\nsynthetic-test-data\n-----END PRIVATE KEY-----\n")
     path.chmod(0o600)
     validate_private_key_file(path)
+    fingerprint = fingerprint_private_key_file(path)
+    assert len(fingerprint) == 64
+    assert "synthetic-test-data" not in fingerprint
