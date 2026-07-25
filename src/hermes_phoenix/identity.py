@@ -93,3 +93,44 @@ def fingerprint_private_key_file(path: Path) -> str:
     if not data.strip():
         raise IdentityError("Phoenix mTLS private key is empty", code="PHOENIX_IDENTITY_FILE_INVALID")
     return hashlib.sha256(data).hexdigest()
+
+
+def fingerprint_certificate_file(path: Path) -> str:
+    """Fingerprint bounded public certificate material for session-cache identity."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise IdentityError(
+            "Could not open Phoenix mTLS client certificate",
+            code="PHOENIX_IDENTITY_FILE_UNREADABLE",
+        ) from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_CREDENTIAL_BYTES:
+            raise IdentityError(
+                "Phoenix mTLS client certificate must be a bounded regular file",
+                code="PHOENIX_IDENTITY_FILE_UNSAFE",
+            )
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(fd, min(8192, _MAX_CREDENTIAL_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > _MAX_CREDENTIAL_BYTES:
+                raise IdentityError(
+                    "Phoenix mTLS client certificate is too large",
+                    code="PHOENIX_IDENTITY_FILE_INVALID",
+                )
+        data = b"".join(chunks)
+        if not data.strip():
+            raise IdentityError(
+                "Phoenix mTLS client certificate is empty",
+                code="PHOENIX_IDENTITY_FILE_INVALID",
+            )
+        return hashlib.sha256(data).hexdigest()
+    finally:
+        os.close(fd)

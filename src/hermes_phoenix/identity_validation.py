@@ -83,7 +83,12 @@ def discover_profile_config_paths(root: Path) -> tuple[tuple[str, Path], ...]:
         for entry in sorted(profiles_root.iterdir(), key=lambda item: item.name):
             if not _PROFILE_RE.fullmatch(entry.name):
                 continue
-            if entry.is_symlink() or not entry.is_dir():
+            if entry.is_symlink():
+                raise ConfigurationError(
+                    f"Hermes profile {entry.name} directory must not be a symlink",
+                    code="PHOENIX_PROFILE_CONFIG_INVALID",
+                )
+            if not entry.is_dir():
                 continue
             config_path = entry / "config.yaml"
             if config_path.exists() or config_path.is_symlink():

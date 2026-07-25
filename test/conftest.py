@@ -93,7 +93,7 @@ class StubPhoenix:
                         )
                     elif role == "denied-role":
                         self._reply(403, {"error": "secret-looking denial detail"})
-                    elif self.headers.get("Authorization") == "Bearer test-bootstrap-token":
+                    elif self.headers.get("Authorization") in {None, "Bearer test-bootstrap-token"}:
                         owner.session_mint_count += 1
                         self._reply(
                             200,

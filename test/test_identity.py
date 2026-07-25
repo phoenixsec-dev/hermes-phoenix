@@ -6,6 +6,7 @@ import pytest
 
 from hermes_phoenix.errors import IdentityError
 from hermes_phoenix.identity import (
+    fingerprint_certificate_file,
     fingerprint_private_key_file,
     fingerprint_runtime_token,
     read_runtime_token,
@@ -64,3 +65,11 @@ def test_private_key_validation_accepts_multiline_pem(tmp_path):
     fingerprint = fingerprint_private_key_file(path)
     assert len(fingerprint) == 64
     assert "synthetic-test-data" not in fingerprint
+
+
+def test_fingerprints_public_certificate_material(tmp_path):
+    path = tmp_path / "client.crt"
+    path.write_text("-----BEGIN CERTIFICATE-----\nsynthetic-public-data\n-----END CERTIFICATE-----\n")
+    fingerprint = fingerprint_certificate_file(path)
+    assert len(fingerprint) == 64
+    assert "synthetic-public-data" not in fingerprint

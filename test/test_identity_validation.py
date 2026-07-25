@@ -143,6 +143,20 @@ def test_all_profile_identity_validation_fails_closed_on_insecure_material_witho
     assert "profile-token-value" not in payload
 
 
+def test_valid_named_symlink_profile_directory_fails_closed(tmp_path):
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    target = tmp_path / "external-profile"
+    target.mkdir()
+    (target / "config.yaml").write_text("{}")
+    os.symlink(target, profiles / "kit-main")
+    with pytest.raises(ConfigurationError) as caught:
+        discover_profile_config_paths(tmp_path)
+    assert caught.value.code == "PHOENIX_PROFILE_CONFIG_INVALID"
+    assert "kit-main" in str(caught.value)
+    assert str(target) not in str(caught.value.to_payload().as_dict())
+
+
 def test_profile_config_symlink_is_rejected_without_following(tmp_path):
     real = tmp_path / "real.yaml"
     real.write_text("{}")

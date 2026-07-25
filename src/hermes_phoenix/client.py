@@ -21,7 +21,13 @@ from .errors import (
     NetworkError,
     SealedResponseError,
 )
-from .identity import fingerprint_runtime_token, read_runtime_token, validate_private_key_file
+from .identity import (
+    fingerprint_certificate_file,
+    fingerprint_private_key_file,
+    fingerprint_runtime_token,
+    read_runtime_token,
+    validate_private_key_file,
+)
 from .refs import normalize_list_prefix, normalize_ref
 from .scrub import get_scrub_registry
 from .session import ROLE_SESSIONS, RoleSession, RoleSessionKey
@@ -66,8 +72,12 @@ class PhoenixClient:
             fingerprint_runtime_token(config.token_file) if config.token_file is not None else None
         )
         if self._identity_fingerprint is None:
-            mtls_identity = f"{config.client_cert or ''}\0{config.client_key or ''}"
-            self._identity_fingerprint = hashlib.sha256(mtls_identity.encode("utf-8")).hexdigest()
+            assert config.client_cert is not None and config.client_key is not None
+            mtls_identity = (
+                f"{fingerprint_certificate_file(config.client_cert)}:"
+                f"{fingerprint_private_key_file(config.client_key)}"
+            )
+            self._identity_fingerprint = hashlib.sha256(mtls_identity.encode("ascii")).hexdigest()
         if config.token_file is not None:
             get_scrub_registry().register(
                 read_runtime_token(config.token_file),

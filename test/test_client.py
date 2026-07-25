@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import urllib.request
 
 import pytest
 
@@ -454,6 +455,34 @@ def test_expired_role_session_is_reminted(stub_phoenix, tmp_path, monkeypatch):
     PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
     assert stub_phoenix.session_mint_count == 2
     assert stub_phoenix.session_renew_count == 0
+
+
+def test_mtls_identity_rotation_at_same_paths_forces_fresh_role_mint(stub_phoenix, tmp_path, monkeypatch):
+    cert = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    cert.write_text("synthetic-certificate-version-one")
+    key.write_text("synthetic-private-key")
+    key.chmod(0o600)
+    config = load_plugin_config(
+        raw={
+            "server": stub_phoenix.url,
+            "client_cert": str(cert),
+            "client_key": str(key),
+            "role": "kit-runtime",
+            "default_namespace": "services/hermes/kit-main",
+        },
+        environ={},
+        profile_name="kit-main",
+    )
+    monkeypatch.setattr(
+        PhoenixClient,
+        "_build_opener",
+        lambda _self: urllib.request.build_opener(urllib.request.ProxyHandler({})),
+    )
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    cert.write_text("synthetic-certificate-version-two")
+    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    assert stub_phoenix.session_mint_count == 2
 
 
 def test_role_session_approval_required_fails_closed_without_polling(stub_phoenix, tmp_path):
