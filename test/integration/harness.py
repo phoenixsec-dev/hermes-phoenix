@@ -73,11 +73,39 @@ def detect_availability(environ: dict[str, str] | None = None) -> Availability:
     source = Path(env.get("PHOENIX_SRC", "").strip() or DEFAULT_PHOENIX_SRC).resolve()
     if not (source / "go.mod").is_file():
         return Availability(False, "No sibling Phoenix source checkout or prebuilt server binary is available")
-    go_bin = env.get("GO_BIN", "").strip() or shutil.which("go")
-    if not go_bin:
-        return Availability(False, "Go is unavailable and PHOENIX_SERVER_BIN was not provided")
-    probe = subprocess.run([go_bin, "version"], capture_output=True, text=True, timeout=10)
-    if probe.returncode != 0:
+
+    configured_go = env.get("GO_BIN", "").strip()
+    if configured_go:
+        go_path = Path(configured_go).expanduser()
+        if not go_path.is_file() or not os.access(go_path, os.X_OK):
+            return Availability(False, "GO_BIN does not name an executable Go toolchain")
+    else:
+        home = Path(env.get("HOME", "").strip() or Path.home())
+        found = shutil.which("go", path=env.get("PATH"))
+        candidates = [
+            Path(found) if found else None,
+            home / ".local" / "go" / "bin" / "go",
+            Path("/usr/local/go/bin/go"),
+        ]
+        go_path = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK)
+            ),
+            None,
+        )
+        if go_path is None:
+            return Availability(False, "Go is unavailable and PHOENIX_SERVER_BIN was not provided")
+    go_bin = str(go_path)
+    try:
+        probe = subprocess.run([go_bin, "version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return Availability(False, "Configured Go toolchain is not runnable")
+    if probe.returncode != 0 or not re.fullmatch(
+        r"go version go\d+\.\S+ \S+/\S+\s*",
+        probe.stdout,
+    ):
         return Availability(False, "Configured Go toolchain is not runnable")
     return Availability(True, source=source, go_bin=go_bin)
 
