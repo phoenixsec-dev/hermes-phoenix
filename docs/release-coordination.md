@@ -6,10 +6,10 @@
 |---|---|
 | Hermes | Tested target `v2026.7.7.2` / `v0.18.2` |
 | Python | `>=3.11,<3.14` |
-| Phoenix feature floor | `v0.15.2` for health/policy/list/resolve, sealed envelopes/dry-run, and role-session mint/renew |
-| Phoenix Hermes audit capture | Required coordinated release after B6; version not assigned yet |
+| Phoenix server | `v0.16.0` or newer, including health/policy/list/resolve, sealed envelopes/dry-run, role-session mint/renew, and Hermes audit capture |
+| Phoenix Hermes audit capture | Included in the coordinated `v0.16.0` release |
 
-The plugin may be tested against Phoenix v0.15.2, but a public release claiming first-class Hermes audit metadata must wait for the Phoenix tag containing B6. Until then Phoenix safely ignores `X-Hermes-*`; those headers are audit-only and never participate in authentication, ACL, policy, sealing, or attestation.
+The plugin and Phoenix `v0.16.0` patch are released together. Older Phoenix versions are unsupported: they safely ignore `X-Hermes-*`, but do not provide the coordinated audit contract. Those headers remain audit-only and never participate in authentication, ACL, policy, sealing, or attestation.
 
 ## Release gate
 
@@ -19,7 +19,7 @@ The plugin may be tested against Phoenix v0.15.2, but a public release claiming 
 4. Re-run `hermes phoenix verify` and a Hermes v0.18.2 host smoke using a scratch profile.
 5. Confirm `enable_resolve` remains default false and Hermes toolset defaults cannot expose it.
 6. Confirm no plugin, SecretSource, scrub, or role-session plaintext cache file is created.
-7. Update the README minimum Phoenix line from the feature floor to the coordinated B6 release before publication if first-class audit capture is part of the release claim.
+7. Confirm all compatibility docs require Phoenix `v0.16.0` or newer and publish the plugin and Phoenix patch together.
 
 ## Path ownership
 

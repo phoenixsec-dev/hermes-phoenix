@@ -6,7 +6,7 @@ Hermes plugin for [Phoenix Secrets Manager](https://github.com/phoenixsec-dev/ph
 
 - Hermes: `v2026.7.7.2` / `v0.18.2`
 - Python: `>=3.11,<3.14`
-- Minimum Phoenix server: `v0.15.2`
+- Minimum Phoenix server: `v0.16.0`
 
 The current foundation includes:
 
@@ -25,7 +25,7 @@ The current foundation includes:
 - machine-readable `hermes phoenix verify`
 - offline stub-server tests plus an optional real-Phoenix integration tier
 
-The plugin and the Phoenix patch that captures `X-Hermes-*` metadata are a coordinated release: publish the plugin alongside the Phoenix version containing that patch. The plugin already emits these headers, but older Phoenix versions such as v0.15.2 safely ignore them.
+The plugin requires Phoenix `v0.16.0` or newer and is released together with the Phoenix patch that captures `X-Hermes-*` metadata. Older Phoenix versions are unsupported; although they safely ignore those headers, they do not provide the coordinated audit contract.
 
 ## Security posture
 
