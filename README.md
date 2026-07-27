@@ -25,7 +25,7 @@ The current foundation includes:
 - machine-readable `hermes phoenix verify`
 - offline stub-server tests plus an optional real-Phoenix integration tier
 
-Phoenix-core capture of the emitted `X-Hermes-*` audit metadata remains a coordinated server-side release item. The plugin sends the headers today, but Phoenix v0.15.2 ignores that family until the coordinated server release lands.
+The plugin and the Phoenix patch that captures `X-Hermes-*` metadata are a coordinated release: publish the plugin alongside the Phoenix version containing that patch. The plugin already emits these headers, but older Phoenix versions such as v0.15.2 safely ignore them.
 
 ## Security posture
 
@@ -35,7 +35,6 @@ Phoenix-core capture of the emitted `X-Hermes-*` audit metadata remains a coordi
 - Bearer-authenticated non-loopback servers must use HTTPS. Redirects and ambient HTTP proxies are disabled.
 - A custom `ca_file` is used as the only TLS root bundle for Phoenix requests. TLS 1.2 or newer is required.
 - Phoenix response bodies are never copied verbatim into parse or HTTP errors. Server-controlled per-ref error text is not copied into tool results.
-- `X-Hermes-*` and `X-Phoenix-Tool` headers are audit hints only. Credentials and Phoenix policy remain the authorization boundary.
 - Plugin discovery performs no network I/O. The once-per-session diagnostic uses a two-second timeout and never replaces runtime enforcement.
 - Sealed HTTP 200 responses must contain complete, matching envelopes. Plaintext is discarded and missing/malformed envelopes fail closed.
 - Seal private keys are owner-only regular non-symlink files containing standard-base64 encoded 32-byte X25519 keys. The plugin derives the public key with PyNaCl and never decrypts an envelope.
@@ -44,6 +43,17 @@ Phoenix-core capture of the emitted `X-Hermes-*` audit metadata remains a coordi
 - Persistent profile token files may never contain `phxs_` session tokens.
 
 Path A bootstrap injection (`phoenix env-exec`) is a separate Phoenix CLI feature. This repository implements only the Path B Hermes runtime plugin.
+
+### Caller headers: audit metadata versus tool policy
+
+The plugin emits both header types, but Phoenix uses them differently:
+
+| Header | Phoenix use | Security effect |
+|---|---|---|
+| `X-Hermes-Profile`, `X-Hermes-Session-Id`, `X-Hermes-Channel`, `X-Hermes-Tool`, `X-Hermes-Task-Id` | Sanitized, capped, untrusted caller metadata for audit records | **Audit-only.** They never affect authentication, ACLs, roles, sealing, session identity, or attestation policy. In particular, `X-Hermes-Tool` cannot satisfy tool policy. |
+| `X-Phoenix-Tool` | Tool-attestation policy input evaluated against Phoenix `allowed_tools` / `deny_tools` rules | **Policy-relevant.** It can affect the access decision, but it does not replace credential authentication or grant access beyond the credential's ACL. It is not recorded as `X-Hermes-*` caller metadata. |
+
+A request may carry both `X-Hermes-Tool` and `X-Phoenix-Tool`. Only `X-Phoenix-Tool` participates in tool policy; the Hermes value remains an audit hint even when the two values conflict.
 
 ## Development install
 
