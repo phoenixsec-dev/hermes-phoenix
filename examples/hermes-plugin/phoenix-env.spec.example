@@ -1,0 +1,8 @@
+# Refs-only Path A env spec (synthetic example).
+# Format: NAME=phoenix://ref per line; `?=` marks an optional ref.
+# The plugin reads this file for names and refs only — literal right-hand
+# sides are never treated as secret values — and `hermes phoenix verify`
+# dry-runs every ref listed here. Keep real secret values out of this file.
+
+EXAMPLE_BOT_TOKEN=phoenix://services/hermes/example-profile/bot-token
+EXAMPLE_PROVIDER_KEY?=phoenix://services/hermes/example-profile/provider-key

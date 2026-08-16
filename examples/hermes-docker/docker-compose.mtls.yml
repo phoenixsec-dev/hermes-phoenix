@@ -1,0 +1,35 @@
+services:
+  phoenix:
+    image: ghcr.io/phoenixsec-dev/phoenix:latest
+    container_name: phoenix
+    volumes:
+      - ./phoenix-data:/data
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  hermes:
+    # Build the hermes-agent image from your Hermes checkout first
+    # (docker compose build in that repo), or substitute your own tag.
+    image: hermes-agent
+    container_name: hermes
+    depends_on:
+      - phoenix
+    env_file:
+      - .env
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    volumes:
+      - ./hermes-home:/opt/data
+      # Directory-plugin install straight from this checkout (example/dev use).
+      - ../../src/hermes_phoenix:/opt/data/plugins/phoenix:ro
+      - ../../plugin.yaml:/opt/data/plugins/phoenix/plugin.yaml:ro
+      # Identity material: chmod 600 on the host first; :ro is not enough.
+      # Uncomment the client_cert/client_key lines in config.yaml for this variant.
+      - ${PHOENIX_SEAL_KEY_HOST}:/run/phoenix/seal.key:ro
+      - ${PHOENIX_CA_CERT_HOST}:/run/phoenix/ca.crt:ro
+      - ${PHOENIX_CLIENT_CERT_HOST}:/run/phoenix/client.crt:ro
+      - ${PHOENIX_CLIENT_KEY_HOST}:/run/phoenix/client.key:ro
+    command: ["gateway", "run"]
+    restart: unless-stopped

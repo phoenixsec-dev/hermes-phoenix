@@ -1,0 +1,31 @@
+# Hermes profile config for the Docker example.
+# Copy to ./hermes-home/config.yaml before docker compose up.
+#
+# Synthetic example — replace the namespace with your own. Never put secret
+# values in this file: the plugin reads identity material only from the
+# mounted /run/phoenix files, and PHOENIX_TOKEN is intentionally unsupported.
+
+plugins:
+  enabled: [phoenix]
+  entries:
+    phoenix:
+      # The plugin requires HTTPS for bearer auth to non-loopback servers,
+      # so the Phoenix container has TLS enabled and its server certificate
+      # includes the Compose DNS name "phoenix" (see README step 4).
+      server: "https://phoenix:9090"
+      token_file: "/run/phoenix/token"
+      ca_file: "/run/phoenix/ca.crt"
+      default_namespace: "services/hermes/example-main"
+      timeout_seconds: 10
+      # Keep false until sealed or explicitly-unsealed behavior is reviewed.
+      # Server-side require_sealed policy is the authoritative control.
+      enable_resolve: false
+      seal_mode: true
+      seal_key_file: "/run/phoenix/seal.key"
+      scrub:
+        enabled: true
+        placeholder: "[PHOENIX-SCRUBBED:{name}]"
+      # mTLS variant (docker-compose.mtls.yml): remove token_file above and
+      # uncomment the client certificate pair.
+      # client_cert: "/run/phoenix/client.crt"
+      # client_key: "/run/phoenix/client.key"
