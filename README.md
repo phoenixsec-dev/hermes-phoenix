@@ -25,7 +25,7 @@ The current foundation includes:
 - machine-readable `hermes phoenix verify`
 - offline stub-server tests plus an optional real-Phoenix integration tier
 
-The plugin requires Phoenix `v0.16.0` or newer and is released together with the Phoenix patch that captures `X-Hermes-*` metadata. Older Phoenix versions are unsupported; although they safely ignore those headers, they do not provide the coordinated audit contract.
+Phoenix `v0.16.0` or newer is the minimum compatibility floor: it is the first Phoenix release that provides the sealed-response, dry-run, role-session, and `X-Hermes-*` audit-capture APIs this plugin depends on. Phoenix releases ship on their own schedule, and this plugin releases independently against that floor. Older Phoenix versions are unsupported; although they safely ignore those headers, they do not provide the coordinated audit contract.
 
 ## Security posture
 

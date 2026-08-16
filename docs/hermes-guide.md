@@ -5,7 +5,7 @@
 - Hermes: tested against `v2026.7.7.2` / `v0.18.2`.
 - Python: `>=3.11,<3.14`.
 - Phoenix server: `v0.16.0` or newer supplies the status/list/resolve, sealed-response, dry-run, role-session, and coordinated `X-Hermes-*` audit APIs used by the plugin.
-- The plugin and Phoenix `v0.16.0` patch are released together. Older servers are unsupported; they ignore the audit hints and never grant authority from them.
+- Phoenix `v0.16.0` is a minimum compatibility floor, not a paired release: Phoenix ships on its own schedule, and this plugin requires a server at or above that floor. Older servers are unsupported; they ignore the audit hints and never grant authority from them.
 
 ## Three secret planes
 
