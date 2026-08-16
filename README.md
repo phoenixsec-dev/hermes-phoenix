@@ -177,6 +177,8 @@ python3 -m pytest -q -m integration
 
 Set `PHOENIX_SERVER_BIN` and optionally `PHOENIX_CLI_BIN` for prebuilt binaries, or provide `PHOENIX_SRC` plus a runnable Go toolchain. The harness builds only into a temporary directory, uses localhost/synthetic values/throwaway state, and never modifies the Phoenix checkout. It skips cleanly when requirements are unavailable; set `PHOENIX_INTEGRATION_REQUIRED=1` to turn unavailability into failure.
 
+A scripted Tier 3 host smoke, `scripts/host_smoke.py`, builds a real Hermes venv at the pinned tag (`HERMES_SRC`, default: a sibling `hermes` checkout), installs the plugin both ways (pip and directory), verifies `plugins.enabled` gating, and runs `hermes phoenix status`/`verify` against a throwaway Phoenix. It is deliberately not in the default matrix, follows the same skip-don't-fail convention, and honors `HERMES_SMOKE_REQUIRED=1` for release gates.
+
 ## Directory-plugin install
 
 Hermes directory plugins need `plugin.yaml` and `__init__.py` in the same directory:

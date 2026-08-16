@@ -110,9 +110,12 @@ Hermes v0.18.2 discards plugin CLI return codes. The printed top-level `ok` fiel
 ```bash
 python3 -m pytest -q                  # offline
 python3 -m pytest -q -m integration   # real Phoenix or clean skip
+python3 scripts/host_smoke.py         # Tier 3 host smoke (real Hermes venv)
 ```
 
 Provide `PHOENIX_SERVER_BIN`/`PHOENIX_CLI_BIN`, or a read-only `PHOENIX_SRC` with a runnable Go toolchain. Builds, state, credentials, and synthetic values live in throwaway directories. The harness binds localhost and cleans up child processes. Set `PHOENIX_INTEGRATION_REQUIRED=1` when a skip should fail CI.
+
+The Tier 3 host smoke additionally needs a Hermes checkout (`HERMES_SRC`, default: a sibling `hermes` directory) containing the pinned tag `v2026.7.7.2` (`HERMES_SMOKE_TAG` overrides). It exports that tag into a temporary directory, builds a fresh venv, installs the plugin as a pip package and as a directory plugin, checks `plugins.enabled` gating, and requires the printed `"ok": true` from `hermes phoenix status` and `verify`. Missing prerequisites skip cleanly; `HERMES_SMOKE_REQUIRED=1` turns a skip into a failure.
 
 ## Troubleshooting
 

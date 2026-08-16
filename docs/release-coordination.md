@@ -16,7 +16,7 @@ Phoenix `v0.16.0` or newer is the minimum compatibility floor, not a paired rele
 1. Plugin commits pass offline pytest, compileall, diff checks, and fresh security review.
 2. The real-server integration tier passes against the intended Phoenix release binary. A local development skip is acceptable evidence of unavailability, not release evidence.
 3. The Phoenix release carrying Hermes audit capture (shared metadata sanitization/capping, `X-Phoenix-Tool` coexistence, its e2e audit scenario, and docs) is tagged at `v0.16.0` or newer.
-4. Re-run `hermes phoenix verify` and a Hermes v0.18.2 host smoke using a scratch profile.
+4. Run the scripted Tier 3 host smoke with `HERMES_SMOKE_REQUIRED=1` (`scripts/host_smoke.py`): a real Hermes v0.18.2 venv at the pinned tag, scratch profile, pip and directory installs, `plugins.enabled` gating, and `hermes phoenix status`/`verify` reporting `ok: true`.
 5. Confirm `enable_resolve` remains default false and Hermes toolset defaults cannot expose it.
 6. Confirm no plugin, SecretSource, scrub, or role-session plaintext cache file is created.
 7. Confirm all compatibility docs state Phoenix `v0.16.0` or newer as the minimum floor and do not claim a simultaneous release.

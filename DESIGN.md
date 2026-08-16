@@ -294,8 +294,10 @@ header exists.
   sealed/scrub/fail-closed behavior end to end. Skips cleanly when a
   server or toolchain is unavailable; `PHOENIX_INTEGRATION_REQUIRED=1`
   turns that skip into a failure for release gates.
-- **Tier 3 — host smoke** (scripted, not in the default matrix): a real
-  Hermes venv at the pinned tag with a scratch profile, the plugin
-  installed both ways (pip and directory), `plugins.enabled` gating
-  verified, and `hermes phoenix verify` run against a throwaway Phoenix.
-  See `docs/release-coordination.md` for where it gates a release.
+- **Tier 3 — host smoke** (`scripts/host_smoke.py`, not in the default
+  matrix): a real Hermes venv at the pinned tag with a scratch profile,
+  the plugin installed both ways (pip and directory), `plugins.enabled`
+  gating verified, and `hermes phoenix verify` run against a throwaway
+  Phoenix. Skips cleanly when prerequisites are missing;
+  `HERMES_SMOKE_REQUIRED=1` turns a skip into a failure. See
+  `docs/release-coordination.md` for where it gates a release.
