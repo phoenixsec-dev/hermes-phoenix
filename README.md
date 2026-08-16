@@ -109,6 +109,8 @@ With `seal_mode: true`, successful values are opaque `PHOENIX_SEALED:<base64-env
 
 With `seal_mode: false`, a successful direct `phoenix_resolve` result intentionally contains plaintext and that session JSONL entry is plaintext. Enable this only when that exposure is explicitly accepted. Each returned value is registered for scrubbing from subsequent terminal and generic tool results.
 
+Shipping unsealed resolve is a deliberate posture, and the plugin adds no seal-key precondition for `phoenix_resolve`: the sibling openclaw-phoenix plugin takes the same shape, with sealed mode as per-config behavior rather than a prerequisite. The authoritative "never plaintext" control is server-side. Set `require_sealed: true` in Phoenix attestation policy for any path that must not leave the server unsealed; Phoenix then rejects any resolve without a valid `X-Phoenix-Seal-Key` for every client and credential, regardless of plugin configuration. A plugin-side prohibition would be a weaker duplicate of that control and would bind only clients that chose to implement it.
+
 `phoenix_status` and `phoenix_list` never return secret values.
 
 ### List prefixes and ACL globs

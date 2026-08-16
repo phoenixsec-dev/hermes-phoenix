@@ -57,6 +57,8 @@ Every envelope must have exact version/algorithm/fields, matching normalized ref
 
 With `seal_mode: false` and `enable_resolve: true`, the direct `phoenix_resolve` response and its session entry contain plaintext by design. Returned values are registered for subsequent output scrubbing. Use only when that exposure is accepted.
 
+This posture is deliberate: the plugin does not make a seal key a precondition for `phoenix_resolve`, matching openclaw-phoenix. Paths that must never resolve to plaintext belong under a Phoenix attestation policy with `require_sealed: true` — that check runs server-side per path for every client and credential, so it cannot be bypassed by plugin configuration, a different client, or a missing plugin-side gate. Treat `seal_mode` as client-side hygiene and `require_sealed` as the enforcement point.
+
 ## Value-aware scrubbing
 
 The process-local registry stores values of at least eight characters plus standard-base64 and URL-encoded forms. Sources are runtime bearer/session tokens, unsealed resolve/SecretSource values, and current environment values for names in `spec_path`.
