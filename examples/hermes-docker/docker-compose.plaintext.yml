@@ -1,0 +1,39 @@
+# Plaintext dev variant: bearer auth over plain HTTP on the Compose-private
+# bridge. Acceptable only because this network carries exactly these two
+# containers on one host; see the transport note in README.md. Use the
+# bearer (TLS) or mTLS variant whenever anything else can reach Phoenix.
+services:
+  phoenix:
+    image: ghcr.io/phoenixsec-dev/phoenix:latest
+    container_name: phoenix
+    volumes:
+      - ./phoenix-data:/data
+    ports:
+      # Loopback-only host binding: never publish a plaintext Phoenix to
+      # the LAN. Container-to-container traffic uses the private bridge.
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  hermes:
+    # Build the hermes-agent image from your Hermes checkout first
+    # (docker compose build in that repo), or substitute your own tag.
+    image: hermes-agent
+    container_name: hermes
+    depends_on:
+      - phoenix
+    env_file:
+      - .env
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    volumes:
+      - ./hermes-home:/opt/data
+      # Directory-plugin install straight from this checkout (example/dev use).
+      - ../../src/hermes_phoenix:/opt/data/plugins/phoenix:ro
+      - ../../plugin.yaml:/opt/data/plugins/phoenix/plugin.yaml:ro
+      # Identity material: chmod 600 on the host first; :ro is not enough.
+      # No CA mount: this variant does not use TLS.
+      - ${PHOENIX_TOKEN_FILE_HOST}:/run/phoenix/token:ro
+      - ${PHOENIX_SEAL_KEY_HOST}:/run/phoenix/seal.key:ro
+    command: ["gateway", "run"]
+    restart: unless-stopped

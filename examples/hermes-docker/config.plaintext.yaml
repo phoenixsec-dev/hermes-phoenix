@@ -1,0 +1,32 @@
+# Hermes profile config for the PLAINTEXT dev variant
+# (docker-compose.plaintext.yml). Copy to ./hermes-home/config.yaml.
+#
+# Synthetic example — replace the namespace with your own. Never put secret
+# values in this file: the plugin reads identity material only from the
+# mounted /run/phoenix files, and PHOENIX_TOKEN is intentionally unsupported.
+
+plugins:
+  enabled: [phoenix]
+  entries:
+    phoenix:
+      # Plain HTTP to a non-loopback address (the Compose DNS name), so the
+      # bearer token crosses the container bridge in cleartext. That is
+      # acceptable HERE only because docker-compose.plaintext.yml keeps a
+      # private single-host network carrying exactly these two containers
+      # and publishes Phoenix on 127.0.0.1 only. The plugin will still log
+      # a transport warning at registration and report it in status/verify
+      # notes — expected for this variant. The moment any other container
+      # joins this network or Phoenix serves another host, switch to the
+      # bearer (TLS) or mTLS variant.
+      server: "http://phoenix:9090"
+      token_file: "/run/phoenix/token"
+      default_namespace: "services/hermes/example-main"
+      timeout_seconds: 10
+      # Keep false until sealed or explicitly-unsealed behavior is reviewed.
+      # Server-side require_sealed policy is the authoritative control.
+      enable_resolve: false
+      seal_mode: true
+      seal_key_file: "/run/phoenix/seal.key"
+      scrub:
+        enabled: true
+        placeholder: "[PHOENIX-SCRUBBED:{name}]"

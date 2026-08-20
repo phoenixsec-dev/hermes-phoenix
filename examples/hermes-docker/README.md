@@ -1,9 +1,10 @@
 # Hermes + Phoenix Docker example
 
-This folder shows a containerized Hermes gateway using the Phoenix plugin, in two auth patterns:
+This folder shows a containerized Hermes gateway using the Phoenix plugin, in three patterns:
 
-- bearer token (`docker-compose.bearer.yml`)
+- bearer token over TLS (`docker-compose.bearer.yml`)
 - mTLS client certificate (`docker-compose.mtls.yml`)
+- bearer token over plain HTTP, dev only (`docker-compose.plaintext.yml`) — the counterpart of the openclaw-docker bearer example
 
 Every value in this folder is a synthetic placeholder. Do not commit real tokens, certificates, or seal private keys — here or anywhere.
 
@@ -11,8 +12,10 @@ Every value in this folder is a synthetic placeholder. Do not commit real tokens
 
 - `docker-compose.bearer.yml`
 - `docker-compose.mtls.yml`
+- `docker-compose.plaintext.yml`
 - `.env.example`
-- `config.yaml` — the Hermes profile config to copy into `./hermes-home/`
+- `config.yaml` — the Hermes profile config (TLS variants) to copy into `./hermes-home/`
+- `config.plaintext.yaml` — the profile config for the plaintext variant
 
 ## Usage
 
@@ -58,10 +61,16 @@ Every value in this folder is a synthetic placeholder. Do not commit real tokens
 
    Hermes discards plugin CLI exit codes, so read the printed top-level `"ok"` field.
 
+## Plaintext dev variant
+
+`docker-compose.plaintext.yml` skips TLS entirely: bearer auth over plain `http://phoenix:9090`. Follow the usage steps above, except: in step 3 still set `server.listen` to `0.0.0.0:9090` but leave TLS off, skip step 4 entirely (no certificate reissue, no CA mount), and copy `config.plaintext.yaml` — not `config.yaml` — to `./hermes-home/config.yaml`.
+
+Why plaintext is acceptable **in this context and no further**: the Compose project creates a private single-host bridge network carrying exactly these two containers, and the variant publishes Phoenix on `127.0.0.1` only, so the cleartext bearer token never crosses a wire another machine can see. The plugin still logs its non-loopback plaintext transport warning at registration and reports it in `status`/`verify` output — that is expected here, not a defect. The moment any other container joins the network, the port binding widens, or Phoenix serves another host, switch to the bearer (TLS) or mTLS variant.
+
 ## Notes
 
 - **File modes and ownership.** Token, seal-key, and mTLS private-key files must have no group/other permission bits (`chmod 600`) *on the host* before mounting; `:ro` mounts do not fix insecure host modes. The plugin also requires the files to be owned by the Hermes process user, so set `HERMES_UID`/`HERMES_GID` in `.env` to the host UID/GID that owns them.
-- **HTTPS is mandatory here.** `https://phoenix:9090` is a non-loopback URL, and the plugin rejects plain HTTP bearer auth to non-loopback servers by design. There is no HTTP variant of this example.
+- **Transport.** Phoenix is LAN-scoped by design and plaintext is intended for loopback; `https://phoenix:9090` is a non-loopback URL, so the TLS variants encrypt the pipe and the plugin warns loudly — never refuses — on non-loopback plain HTTP (see the plaintext variant above for the one context where that warning is acceptable).
 - **Plugin delivery.** The compose files mount this checkout as a directory plugin (`plugin.yaml` plus the package files at `/opt/data/plugins/phoenix/`) for example/dev use. The Hermes image already ships the plugin's one dependency (PyNaCl). For a release install, `pip install hermes-phoenix` into the image's Hermes environment instead.
 - **Conservative rollout.** `config.yaml` keeps `enable_resolve: false`, so `phoenix_resolve` is not even registered. Enable it per profile only after choosing sealed or explicitly-unsealed behavior, and put `require_sealed: true` in Phoenix attestation policy on any path that must never leave the server as plaintext — that server-side check binds every client regardless of plugin configuration.
 - **One profile per gateway.** Hermes runs one gateway per profile and the profile is the identity boundary. Run more profiles by repeating the pattern with a distinct token and seal key per profile — never shared. `hermes phoenix verify --all-profiles` fails closed on duplicate identity material.
