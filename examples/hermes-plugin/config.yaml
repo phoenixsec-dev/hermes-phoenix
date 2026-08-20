@@ -10,6 +10,9 @@ plugins:
   enabled: [phoenix]
   entries:
     phoenix:
+      # https:// because this host is not loopback: enable TLS whenever
+      # requests cross a wire. Plain http:// is the supported default only
+      # for loopback; non-loopback http:// draws a loud plugin warning.
       server: "https://phoenix.example:9090"
       token_file: "~/.config/phoenix/token-example-profile"
       # Optional non-step-up role: the token above only mints a scoped

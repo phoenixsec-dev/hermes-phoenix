@@ -9,9 +9,12 @@ plugins:
   enabled: [phoenix]
   entries:
     phoenix:
-      # The plugin requires HTTPS for bearer auth to non-loopback servers,
-      # so the Phoenix container has TLS enabled and its server certificate
-      # includes the Compose DNS name "phoenix" (see README step 4).
+      # Non-loopback URL, so requests cross the container bridge — a wire.
+      # TLS keeps the bearer token and values out of cleartext (plain
+      # http:// draws a loud plugin warning; config.plaintext.yaml is the
+      # dev-only exception). The Phoenix container has TLS enabled and its
+      # server certificate includes the Compose DNS name "phoenix" (README
+      # step 4).
       server: "https://phoenix:9090"
       token_file: "/run/phoenix/token"
       ca_file: "/run/phoenix/ca.crt"

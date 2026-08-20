@@ -44,6 +44,10 @@ Token, seal-key, and mTLS private-key files must be owner-only (`0600`/`0400`) r
 
 Note the ACL glob: `*` matches one path segment and `**` matches recursively, so nested namespaces normally need the `/**:read` form to list.
 
+## Transport
+
+Phoenix is LAN-scoped by design (internet/WAN exposure is out of scope and unsupported), and a LAN is not a trust boundary. The example `server` URL is `https://` because it names a non-loopback host: enable TLS on the Phoenix server and set `ca_file` whenever requests cross a wire. `http://` is the supported default only for loopback (`127.0.0.1`, `localhost`, `[::1]`) single-machine setups; non-loopback `http://` draws a loud plugin warning — in the gateway log, `phoenix_status` notes, and the verify `transport` check — but is never refused.
+
 ## Verify
 
 ```bash

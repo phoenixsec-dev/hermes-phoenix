@@ -20,6 +20,7 @@ Phoenix `v0.16.0` or newer is the minimum compatibility floor, not a paired rele
 5. Confirm `enable_resolve` remains default false and Hermes toolset defaults cannot expose it.
 6. Confirm no plugin, SecretSource, scrub, or role-session plaintext cache file is created.
 7. Confirm all compatibility docs state Phoenix `v0.16.0` or newer as the minimum floor and do not claim a simultaneous release.
+8. Confirm transport posture consistency across docs and examples: the LAN-scoped envelope (WAN out of scope; LAN in scope but not a trust boundary), loopback plaintext as the default, warn-never-refuse on non-loopback `http://`, and no non-loopback `http://` example anywhere without an inline note explaining why plaintext is acceptable there. This posture is shared with the Phoenix server and openclaw-phoenix; do not diverge unilaterally.
 
 ## Path ownership
 

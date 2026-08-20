@@ -35,7 +35,7 @@ Every value in this folder is a synthetic placeholder. Do not commit real tokens
      --reissue-cert --san phoenix --config /data/config.json
    ```
 
-   This matters because the plugin requires HTTPS for bearer auth to any non-loopback server, and it validates the certificate against the URL hostname (`phoenix`).
+   This matters because `https://phoenix:9090` is non-loopback — requests cross the container bridge, a wire — and the plugin validates the certificate against the URL hostname (`phoenix`).
 5. Provision the profile's Phoenix identity with your Phoenix CLI (synthetic example):
 
    ```bash

@@ -59,6 +59,14 @@ With `seal_mode: false` and `enable_resolve: true`, the direct `phoenix_resolve`
 
 This posture is deliberate: the plugin does not make a seal key a precondition for `phoenix_resolve`, matching openclaw-phoenix. Paths that must never resolve to plaintext belong under a Phoenix attestation policy with `require_sealed: true` — that check runs server-side per path for every client and credential, so it cannot be bypassed by plugin configuration, a different client, or a missing plugin-side gate. Treat `seal_mode` as client-side hygiene and `require_sealed` as the enforcement point.
 
+## Transport
+
+Phoenix is LAN-scoped by design — internet/WAN exposure is out of scope and unsupported — and a LAN is **not** a trust boundary: one sniffed bearer token yields everything its ACL permits. Concretely:
+
+- `http://` to loopback (`127.0.0.1`, `localhost`, `[::1]`) is the supported default for single-machine deployments; that traffic never reaches a NIC.
+- Whenever requests cross a wire — another LAN host, a container bridge — enable TLS on the Phoenix server and use `https://` with `ca_file` pointing at the Phoenix CA certificate. On current Phoenix servers, `auth.mtls.enabled: true` with `auth.mtls.require: false` serves HTTPS for bearer clients without requiring client certificates, and server certificates carry IP SANs, so `https://<lan-ip>:9090` validates against the generated CA.
+- Non-loopback `http://` is warned about loudly and never refused: the warning appears in the gateway log at registration, in `phoenix_status` notes, and as the `transport` check in `hermes phoenix verify`. Treat it as a to-do, not noise. The warn-only posture is deliberate and shared with the Phoenix server and openclaw-phoenix; see the Transport posture section of `DESIGN.md`.
+
 ## Value-aware scrubbing
 
 The process-local registry stores values of at least eight characters plus standard-base64 and URL-encoded forms. Sources are runtime bearer/session tokens, unsealed resolve/SecretSource values, and current environment values for names in `spec_path`.
@@ -125,3 +133,4 @@ The Tier 3 host smoke additionally needs a Hermes checkout (`HERMES_SRC`, defaul
 - `PHOENIX_APPROVAL_REQUIRED`: operator action is required; the plugin will not poll.
 - `PHOENIX_DUPLICATE_IDENTITY_MATERIAL`: issue unique token and seal material per profile.
 - SecretSource `timeout`/`network`/`auth_failed`: use `hermes phoenix verify`, then inspect safe Phoenix audit/server logs.
+- Transport warning in the log, status notes, or the verify `transport` check: the profile's server URL is non-loopback `http://`. Enable TLS on the Phoenix server and switch the URL to `https://`; the plugin warns but never refuses.

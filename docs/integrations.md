@@ -14,6 +14,8 @@ Start here:
 | SecretSource (`secrets.phoenix`) | this plugin | Mapped `ENV_VAR: phoenix://...` credentials for subsequently spawned Hermes processes and re-pulls |
 | Runtime tools | this plugin | Agent-initiated `phoenix_status` / `phoenix_list` / `phoenix_resolve` with per-request ACL, attestation, sealing, and audit |
 
+Transport applies to all three planes identically: Phoenix is LAN-scoped by design (internet/WAN exposure is out of scope and unsupported), and a LAN is not a trust boundary. Plaintext `http://` to loopback is the supported default; enable TLS on the Phoenix server and use `https://` whenever a request crosses a wire. The plugin warns loudly — never refuses — on non-loopback `http://`, in the gateway log, `phoenix_status` notes, and the `transport` check of `hermes phoenix verify`.
+
 ### Plugin package path — runtime tools
 
 Use the plugin package when you want:
