@@ -108,6 +108,24 @@ def test_verify_reports_ref_failures_without_server_error_or_values(stub_phoenix
     assert "PHOENIX_REF_VERIFY_FAILED" in rendered
 
 
+def test_verify_transport_check_is_ok_without_warning_on_loopback(stub_phoenix, tmp_path):
+    report = verify_profile(_config(stub_phoenix, tmp_path), {})
+    transport = next(check for check in report["checks"] if check["name"] == "transport")
+    assert transport == {"name": "transport", "ok": True}
+
+
+def test_verify_surfaces_plaintext_transport_warning_without_failing(stub_phoenix, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "hermes_phoenix.verify.transport_warning",
+        lambda server: "synthetic cleartext transport warning",
+    )
+    report = verify_profile(_config(stub_phoenix, tmp_path), {})
+    transport = next(check for check in report["checks"] if check["name"] == "transport")
+    assert transport["ok"] is True
+    assert transport["warning"] == "synthetic cleartext transport warning"
+    assert report["ok"] is True
+
+
 def test_sealed_verify_without_refs_still_exercises_handshake(stub_phoenix, tmp_path):
     seal_key = tmp_path / "seal.key"
     seal_key.write_text(SEAL_PRIVATE_KEY)

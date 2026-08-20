@@ -107,19 +107,39 @@ def _server(value: Any) -> str:
     parsed = urlsplit(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ConfigurationError("Phoenix server must be an http:// or https:// URL")
-    if parsed.scheme == "http":
-        hostname = parsed.hostname.lower()
-        try:
-            is_loopback = ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            is_loopback = hostname == "localhost"
-        if not is_loopback:
-            raise ConfigurationError("Phoenix server must use https:// except for loopback development addresses")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ConfigurationError("Phoenix server URL must not contain credentials, query, or fragment")
     if parsed.path not in {"", "/"}:
         raise ConfigurationError("Phoenix server URL must not contain a path")
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def transport_warning(server: str) -> str | None:
+    """Loud, never-fatal signal for plain HTTP to a non-loopback address.
+
+    Deliberate posture, shared with the Phoenix server and the sibling
+    openclaw-phoenix plugin: warn loudly on non-loopback plaintext, never
+    refuse. This replaced an earlier hard-fail so the plugin cannot be
+    stricter than the server it fronts; see the Transport posture section
+    of DESIGN.md for the rationale.
+    """
+    parsed = urlsplit(server)
+    if parsed.scheme != "http":
+        return None
+    hostname = (parsed.hostname or "").lower()
+    try:
+        is_loopback = ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        is_loopback = hostname == "localhost"
+    if is_loopback:
+        return None
+    return (
+        f"Phoenix server {server} is plain http:// to a non-loopback address: "
+        "bearer tokens and secret values cross the network in cleartext, readable by "
+        "anything on the network path. Phoenix plaintext is intended for loopback only; "
+        "enable TLS on the Phoenix server and switch this profile to https:// whenever "
+        "requests cross a wire."
+    )
 
 
 def _load_hermes_entry() -> Mapping[str, Any]:
@@ -222,6 +242,9 @@ def load_plugin_config(
         )
 
     warnings: list[str] = []
+    plaintext_warning = transport_warning(server)
+    if plaintext_warning is not None:
+        warnings.append(plaintext_warning)
     if source.get("ca_cert"):
         warnings.append("ca_cert is a deprecated alias; use ca_file instead.")
 

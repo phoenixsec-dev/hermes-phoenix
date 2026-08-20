@@ -83,7 +83,6 @@ def test_config_supports_mtls_without_bearer(tmp_path):
     "raw, message",
     [
         ({"server": "file:///tmp/socket", "token_file": "/tmp/token"}, "http:// or https://"),
-        ({"server": "http://phoenix.example:9090", "token_file": "/tmp/token"}, "must use https://"),
         ({"server": "https://phoenix.example/api", "token_file": "/tmp/token"}, "must not contain a path"),
         ({"server": "https://phoenix.example", "token_file": "/tmp/token", "unknown": True}, "Unknown"),
         ({"server": "https://phoenix.example", "token_file": "relative/token"}, "absolute path"),
@@ -120,3 +119,27 @@ def test_config_supports_mtls_without_bearer(tmp_path):
 def test_config_rejects_unsafe_values(raw, message):
     with pytest.raises(ConfigurationError, match=message):
         load_plugin_config(raw=raw, environ={})
+
+
+def test_config_warns_but_never_fails_on_non_loopback_plaintext(tmp_path):
+    config = load_plugin_config(
+        raw={"server": "http://phoenix.example:9090", "token_file": str(tmp_path / "token")},
+        environ={},
+    )
+    assert config.server == "http://phoenix.example:9090"
+    rendered = " ".join(config.configuration_warnings)
+    assert "cleartext" in rendered
+    assert "https://" in rendered
+    assert "http://phoenix.example:9090" in rendered
+
+
+@pytest.mark.parametrize(
+    "server",
+    ["http://127.0.0.1:9090", "http://localhost:9090", "http://[::1]:9090", "https://phoenix.example:9090"],
+)
+def test_config_loopback_plaintext_and_https_carry_no_transport_warning(tmp_path, server):
+    config = load_plugin_config(
+        raw={"server": server, "token_file": str(tmp_path / "token")},
+        environ={},
+    )
+    assert not any("cleartext" in warning for warning in config.configuration_warnings)

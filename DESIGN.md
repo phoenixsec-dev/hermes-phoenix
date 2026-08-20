@@ -17,7 +17,7 @@ this plugin implements exactly one of them:
 | Plane | Owner | Purpose | Timing |
 |---|---|---|---|
 | Path A — `phoenix env-exec` | Phoenix CLI (separate feature) | Bootstrap the discovering gateway process from a refs-only spec file | Before Hermes starts |
-| SecretSource | this plugin (§8) | Mapped startup credentials for subsequently spawned Hermes processes and re-pulls | After plugin registration |
+| SecretSource | this plugin (§9) | Mapped startup credentials for subsequently spawned Hermes processes and re-pulls | After plugin registration |
 | Runtime tools | this plugin (§4) | Agent-initiated status/list/resolve with per-request policy, sealing, and audit | During a session |
 
 Path A gets secrets *into* the gateway process; this plugin is the
@@ -46,7 +46,7 @@ analogue for: a registered Phoenix SecretSource.
   importable in any supported Hermes venv without dependency drift.
 - **Untrusted metadata stays metadata.** Caller correlation headers are
   audit hints; nothing the plugin sends in a header can change an access
-  decision except the explicitly policy-relevant `X-Phoenix-Tool` (§10).
+  decision except the explicitly policy-relevant `X-Phoenix-Tool` (§11).
 
 ## 3. Identity model
 
@@ -69,9 +69,10 @@ Identity material rules, enforced on every read:
   with `O_NOFOLLOW`; symlink delivery is rejected.
 - A persistent `token_file` containing a `phxs_` session token is
   rejected: short-lived session material is not durable profile identity.
-- Bearer auth to a non-loopback server requires HTTPS. Redirects and
-  ambient HTTP proxies are disabled; a configured `ca_file` becomes the
-  only TLS root for Phoenix requests, TLS 1.2 minimum.
+- Redirects and ambient HTTP proxies are disabled; a configured
+  `ca_file` becomes the only TLS root for Phoenix requests, TLS 1.2
+  minimum. Plain `http://` to a non-loopback address is loudly warned
+  about but never refused (§7).
 
 **Cross-profile uniqueness.** Because profiles are separate processes,
 duplicate-credential detection cannot happen in-process. The operator
@@ -158,7 +159,7 @@ Unsealed `phoenix_resolve` ships, default-off. With `seal_mode: false`
 and `enable_resolve: true`, the direct tool result and its session JSONL
 entry contain plaintext by design; each returned value is immediately
 registered with the scrubber so it cannot resurface un-scrubbed in later
-output (§7).
+output (§8).
 
 The plugin deliberately does not make a seal key a precondition for
 resolve, matching openclaw-phoenix, where sealed mode is per-config
@@ -171,7 +172,38 @@ duplicate of that control, binding only clients that chose to implement
 it, and would push operators toward assuming a client-side gate is a
 security boundary. It is not; `require_sealed` is.
 
-## 7. Value-aware output scrubbing
+## 7. Transport posture
+
+Phoenix is **LAN-scoped by design**: internet/WAN exposure is out of
+scope and unsupported. Being in scope does not make the LAN trusted —
+a LAN includes containers on shared bridges, IoT devices, guest WiFi,
+and anything that has compromised one host, and Phoenix is a credential
+concentrator: sniffing one bearer token yields everything that token's
+ACL permits. The consequences for this plugin:
+
+- **Plaintext loopback is the supported default.** Loopback traffic
+  never reaches a NIC, and the dominant deployment is single-machine.
+- **Crossing a wire means TLS.** Any non-loopback server URL should be
+  `https://` with `ca_file` set to the Phoenix CA certificate.
+- **Non-loopback `http://` warns loudly and never refuses.** The
+  warning names the exposure (bearer tokens and secret values in
+  cleartext on that specific address) and is surfaced structurally, not
+  just on a console: in the gateway log at registration, in
+  `phoenix_status` notes, and as the `transport` check in
+  `hermes phoenix verify` output.
+
+This is a deliberate posture change made knowingly: earlier revisions
+hard-failed on non-loopback `http://`, which made hermes-phoenix the
+only one of the three Phoenix packages (server, openclaw-phoenix,
+hermes-phoenix) that failed closed — stricter than the Phoenix server
+itself, and unusable against a stock Phoenix on a LAN address. A
+client-side refusal here is not a security boundary (any other client
+could still connect in plaintext); the real controls are enabling TLS
+on the server for the wire and `require_sealed` policy for values
+(§6). Consistency of signal across all three packages — warn loudly
+on non-loopback plaintext, never refuse — is the point.
+
+## 8. Value-aware output scrubbing
 
 Hermes's built-in redaction is pattern-based, and session JSONL is
 written before redaction applies, so a secret that matches no vendor
@@ -182,7 +214,7 @@ standard-base64 and URL-encoded forms; minimum length 8) to safe labels.
 Registered sources:
 
 1. plaintext values returned by explicitly unsealed `phoenix_resolve`;
-2. values fetched by the SecretSource (§8);
+2. values fetched by the SecretSource (§9);
 3. the profile's Phoenix runtime bearer token and minted session tokens;
 4. current process-environment values for variable names found in the
    Path A `spec_path` file — the spec is read for **names and refs
@@ -202,7 +234,7 @@ and sealed resolution remains the recommended default wherever a seal
 key exists. Registry contents are process-local, never persisted, and
 exposed through no tool.
 
-## 8. SecretSource
+## 9. SecretSource
 
 On Hermes versions exposing SecretSource API v1
 (`register_secret_source`, feature-detected), the plugin registers a
@@ -230,7 +262,7 @@ initial environment load of the process that discovers the plugin, so
 SecretSource does **not** replace Path A for the gateway's own
 bootstrap. It covers subsequently spawned Hermes processes and re-pulls.
 
-## 9. Preflight and verify
+## 10. Preflight and verify
 
 Registration runs a warning-only preflight and re-checks once per
 session on `on_session_start` (with a capped 2-second timeout): server
@@ -246,7 +278,7 @@ visibility. It prints refs and counts, never values. Diagnostics never
 copy server-controlled response bodies or per-ref error text into tool
 results.
 
-## 10. Audit header contract
+## 11. Audit header contract
 
 Every Phoenix API call carries caller metadata, sanitized (control and
 format characters stripped, whitespace collapsed) and capped at 256
@@ -270,7 +302,7 @@ replace credential authentication or expand a credential's ACL. No
 header in the set carries secret material, and no session-key-class
 header exists.
 
-## 11. Compatibility
+## 12. Compatibility
 
 - Hermes: designed and tested against `v2026.7.7.2` / `v0.18.2`.
   Features missing on older hosts (notably `register_secret_source`)
@@ -281,7 +313,7 @@ header exists.
   sealed responses, dry-run resolve, role sessions, and `X-Hermes-*`
   audit capture. Phoenix releases ship independently of this plugin.
 
-## 12. Testing
+## 13. Testing
 
 - **Tier 1 — offline unit tier** (default `pytest`): stub Phoenix HTTP
   server, no network, no Hermes install required. Covers config

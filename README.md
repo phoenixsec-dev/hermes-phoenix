@@ -32,7 +32,7 @@ Phoenix `v0.16.0` or newer is the minimum compatibility floor: it is the first P
 - Runtime calls never read a bearer from `PHOENIX_TOKEN`; configure `token_file` or client-certificate mTLS.
 - `token_file` must be an owner-only (`0600` or `0400`) regular file owned by the Hermes process user. It is opened with `O_NOFOLLOW`; symlink-based token delivery is unsupported.
 - Session tokens (`phxs_...`) are rejected as persistent profile identity.
-- Bearer-authenticated non-loopback servers must use HTTPS. Redirects and ambient HTTP proxies are disabled.
+- Plain `http://` to a non-loopback server draws a loud transport warning (registration log, status notes, and the `transport` check in verify) but is never refused — see [Transport posture](#transport-posture). Redirects and ambient HTTP proxies are disabled.
 - A custom `ca_file` is used as the only TLS root bundle for Phoenix requests. TLS 1.2 or newer is required.
 - Phoenix response bodies are never copied verbatim into parse or HTTP errors. Server-controlled per-ref error text is not copied into tool results.
 - Plugin discovery performs no network I/O. The once-per-session diagnostic uses a two-second timeout and never replaces runtime enforcement.
@@ -43,6 +43,16 @@ Phoenix `v0.16.0` or newer is the minimum compatibility floor: it is the first P
 - Persistent profile token files may never contain `phxs_` session tokens.
 
 Path A bootstrap injection (`phoenix env-exec`) is a separate Phoenix CLI feature. This repository implements only the Path B Hermes runtime plugin.
+
+### Transport posture
+
+Phoenix is LAN-scoped by design: internet/WAN exposure is out of scope and unsupported. LAN deployments are in scope, but a LAN is **not** a trust boundary — Phoenix is a credential concentrator, and one sniffed bearer token yields everything that token's ACL permits. The rules:
+
+- Plaintext `http://` to a loopback address is the supported default; loopback traffic never reaches a NIC, so TLS adds nothing there.
+- Whenever a request crosses a wire — a LAN segment, a container bridge, anything past the local machine — enable TLS on the Phoenix server and use `https://`, with `ca_file` pointing at the Phoenix CA certificate.
+- On non-loopback `http://`, the plugin **warns loudly and never refuses**: the warning appears in the gateway log at plugin registration, in the `notes` of `phoenix_status` / `hermes phoenix status`, and as the `transport` check in `hermes phoenix verify` output.
+
+Warn-instead-of-refuse is a deliberate posture change: earlier revisions hard-failed on non-loopback `http://`, which made this the only Phoenix package stricter than the Phoenix server itself and unusable against a stock LAN deployment. All three Phoenix packages (the server, openclaw-phoenix, and this plugin) now hold one identical posture — warn loudly on non-loopback plaintext, never refuse. See the Transport posture section of [DESIGN.md](./DESIGN.md) for the full rationale.
 
 ### Caller headers: audit metadata versus tool policy
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .client import CallerContext, PhoenixClient
-from .config import PluginConfig
+from .config import PluginConfig, transport_warning
 from .errors import ConfigurationError, PhoenixPluginError
 from .identity_validation import load_profile_snapshots, validate_profile_identity_uniqueness
 from .refs import normalize_ref
@@ -60,6 +60,13 @@ def verify_profile(config: PluginConfig, raw_hermes_config: Mapping[str, Any]) -
     try:
         refs = collect_verify_refs(config, raw_hermes_config)
         checks.append({"name": "config", "ok": True})
+        # Non-loopback plaintext is a warning, never a failure: the check
+        # stays ok so verify matches the warn-only transport posture.
+        transport_check: dict[str, Any] = {"name": "transport", "ok": True}
+        plaintext_warning = transport_warning(config.server)
+        if plaintext_warning is not None:
+            transport_check["warning"] = plaintext_warning
+        checks.append(transport_check)
     except Exception as exc:
         return {
             "profile": config.profile_name,
