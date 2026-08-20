@@ -11,9 +11,9 @@ def test_config_uses_profile_namespace_and_never_env_bearer(tmp_path):
     config = load_plugin_config(
         raw={"server": "https://phoenix.example:9090", "token_file": str(token_file)},
         environ={"PHOENIX_TOKEN": "must-not-be-read"},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
-    assert config.default_namespace == "services/hermes/kit-main"
+    assert config.default_namespace == "services/hermes/example-main"
     assert config.token_file == token_file
     assert config.enable_resolve is False
     assert not hasattr(config, "token")
@@ -23,7 +23,7 @@ def test_config_accepts_enable_resolve_and_custom_ca_file(tmp_path):
     ca_file = tmp_path / "phoenix-ca.pem"
     config = load_plugin_config(
         raw={
-            "server": "https://192.168.0.118:9090",
+            "server": "https://phoenix.example:9090",
             "token_file": str(tmp_path / "token"),
             "ca_file": str(ca_file),
             "enable_resolve": True,
@@ -52,7 +52,7 @@ def test_config_treats_b4_and_b5_role_options_as_functional(tmp_path):
         raw={
             "server": "https://phoenix.example:9090",
             "token_file": str(tmp_path / "token"),
-            "role": "kit-runtime",
+            "role": "example-runtime",
             "seal_mode": True,
             "seal_key_file": str(tmp_path / "seal.key"),
             "spec_path": str(tmp_path / "env-spec"),

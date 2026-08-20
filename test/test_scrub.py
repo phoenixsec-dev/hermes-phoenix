@@ -38,7 +38,7 @@ def test_minimum_length_labels_and_deterministic_duplicate_ownership():
     registry.register("shared-secret", name="z label")
     registry.register("shared-secret", name="a/label")
     assert registry.scrub("shared-secret") == "[PHOENIX-SCRUBBED:a-label]"
-    assert label_from_ref("phoenix://services/hermes/kit/token value") == "token-value"
+    assert label_from_ref("phoenix://services/hermes/example-profile/token value") == "token-value"
 
 
 def test_longest_overlap_wins_and_custom_placeholder_is_respected():
@@ -59,9 +59,9 @@ def test_env_spec_registers_current_environment_values_but_not_literal_rhs(tmp_p
     spec = tmp_path / "profile.spec"
     spec.write_text(
         "# refs and names only\n"
-        "CALDAV_PASSWORD=phoenix://services/kit/caldav-password\n"
-        "OPTIONAL_TOKEN?=phoenix://services/kit/optional-token # comment\n"
-        "WHITEBOARD_BY=kit\n"
+        "CALDAV_PASSWORD=phoenix://services/example-profile/caldav-password\n"
+        "OPTIONAL_TOKEN?=phoenix://services/example-profile/optional-token # comment\n"
+        "DEPLOY_LABEL=staging\n"
     )
     registry = ScrubRegistry()
     entries = register_spec_environment(
@@ -70,18 +70,18 @@ def test_env_spec_registers_current_environment_values_but_not_literal_rhs(tmp_p
         environ={
             "CALDAV_PASSWORD": "current-caldav-secret",
             "OPTIONAL_TOKEN": "current-optional-secret",
-            "WHITEBOARD_BY": "current-environment-label",
+            "DEPLOY_LABEL": "current-environment-label",
         },
     )
     assert [(entry.name, entry.ref) for entry in entries] == [
-        ("CALDAV_PASSWORD", "phoenix://services/kit/caldav-password"),
-        ("OPTIONAL_TOKEN", "phoenix://services/kit/optional-token"),
-        ("WHITEBOARD_BY", None),
+        ("CALDAV_PASSWORD", "phoenix://services/example-profile/caldav-password"),
+        ("OPTIONAL_TOKEN", "phoenix://services/example-profile/optional-token"),
+        ("DEPLOY_LABEL", None),
     ]
     assert registry.scrub("current-caldav-secret") == "[PHOENIX-SCRUBBED:CALDAV_PASSWORD]"
     assert registry.scrub("current-optional-secret") == "[PHOENIX-SCRUBBED:OPTIONAL_TOKEN]"
-    assert registry.scrub("current-environment-label") == "[PHOENIX-SCRUBBED:WHITEBOARD_BY]"
-    assert registry.scrub("literal kit remains") == "literal kit remains"
+    assert registry.scrub("current-environment-label") == "[PHOENIX-SCRUBBED:DEPLOY_LABEL]"
+    assert registry.scrub("literal staging remains") == "literal staging remains"
 
 
 @pytest.mark.parametrize(

@@ -18,18 +18,18 @@ def _config(stub_phoenix, tmp_path, **extra):
         raw={
             "server": stub_phoenix.url,
             "token_file": str(token),
-            "default_namespace": "services/hermes/kit-main",
+            "default_namespace": "services/hermes/example-main",
             **extra,
         },
         environ={},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
 
 
 def test_collect_verify_refs_uses_spec_and_secret_source_mappings(tmp_path, stub_phoenix):
     spec = tmp_path / "profile.spec"
     spec.write_text(
-        "FROM_SPEC=phoenix://services/hermes/kit-main/calendar/password\n"
+        "FROM_SPEC=phoenix://services/hermes/example-main/calendar/password\n"
         "LITERAL=not-a-secret-value\n"
     )
     config = _config(stub_phoenix, tmp_path, spec_path=str(spec))
@@ -39,15 +39,15 @@ def test_collect_verify_refs_uses_spec_and_secret_source_mappings(tmp_path, stub
             "secrets": {
                 "phoenix": {
                     "env": {
-                        "DB_PASSWORD": "phoenix://services/hermes/kit-main/storage/token",
+                        "DB_PASSWORD": "phoenix://services/hermes/example-main/storage/token",
                     }
                 }
             }
         },
     )
     assert refs == (
-        "phoenix://services/hermes/kit-main/calendar/password",
-        "phoenix://services/hermes/kit-main/storage/token",
+        "phoenix://services/hermes/example-main/calendar/password",
+        "phoenix://services/hermes/example-main/storage/token",
     )
 
 
@@ -65,14 +65,14 @@ def test_verify_is_machine_readable_dry_run_and_never_returns_values(stub_phoeni
         "secrets": {
             "phoenix": {
                 "env": {
-                    "CALDAV_PASSWORD": "phoenix://services/hermes/kit-main/calendar/password",
+                    "CALDAV_PASSWORD": "phoenix://services/hermes/example-main/calendar/password",
                 }
             }
         }
     }
     report = verify_profile(config, raw)
     assert report["ok"] is True
-    assert report["profile"] == "kit-main"
+    assert report["profile"] == "example-main"
     assert report["refs"] == {"total": 1, "ok": 1, "failed": 0}
     assert any(check["name"] == "sealed_handshake" and check["ok"] for check in report["checks"])
     assert any(
@@ -94,7 +94,7 @@ def test_verify_reports_ref_failures_without_server_error_or_values(stub_phoenix
             "secrets": {
                 "phoenix": {
                     "env": {
-                        "MISSING": "phoenix://services/hermes/kit-main/missing",
+                        "MISSING": "phoenix://services/hermes/example-main/missing",
                     }
                 }
             }
@@ -136,7 +136,7 @@ def test_all_profiles_reports_identity_check_without_paths_or_fingerprints(stub_
                         "phoenix": {
                             "server": stub_phoenix.url,
                             "token_file": str(token),
-                            "default_namespace": "services/hermes/kit-main",
+                            "default_namespace": "services/hermes/example-main",
                         }
                     }
                 }
@@ -154,10 +154,10 @@ def test_all_profiles_reports_identity_check_without_paths_or_fingerprints(stub_
 
 def test_all_profiles_duplicate_identity_fails_before_network_and_hides_paths(stub_phoenix, tmp_path):
     root = tmp_path / "hermes"
-    profiles = root / "profiles" / "kit-main"
+    profiles = root / "profiles" / "example-main"
     profiles.mkdir(parents=True)
     token_a = root / "default.token"
-    token_b = root / "kit.token"
+    token_b = root / "example.token"
     for token in (token_a, token_b):
         token.write_text("shared-profile-token")
         token.chmod(0o600)

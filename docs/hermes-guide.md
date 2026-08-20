@@ -25,15 +25,15 @@ plugins:
   entries:
     phoenix:
       server: "https://phoenix.example:9090"
-      token_file: "~/.config/phoenix/token-kit"
-      role: "hermes-kit-runtime"       # optional, non-step-up
+      token_file: "~/.config/phoenix/token-my-profile"
+      role: "hermes-my-profile-runtime"  # optional, non-step-up
       ca_file: "~/.config/phoenix/ca.crt"
-      default_namespace: "services/hermes/kit"
+      default_namespace: "services/hermes/my-profile"
       timeout_seconds: 10
       enable_resolve: false
       seal_mode: true
-      seal_key_file: "~/.config/phoenix/seal-kit.key"
-      spec_path: "/etc/hermes/phoenix-env/kit.spec"
+      seal_key_file: "~/.config/phoenix/seal-my-profile.key"
+      spec_path: "/etc/hermes/phoenix-env/my-profile.spec"
       scrub:
         enabled: true
         placeholder: "[PHOENIX-SCRUBBED:{name}]"
@@ -74,7 +74,7 @@ secrets:
   phoenix:
     enabled: true
     env:
-      NEXTCLOUD_CALDAV_APP_PASSWORD: "phoenix://services/kit/caldav-password"
+      EXAMPLE_CALDAV_APP_PASSWORD: "phoenix://services/my-profile/caldav-password"
     timeout_seconds: 20
     override_existing: false
 ```

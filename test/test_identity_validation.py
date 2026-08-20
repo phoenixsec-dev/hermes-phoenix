@@ -55,32 +55,32 @@ def _write_profile(root, name, config):
 def test_discovers_only_default_and_direct_valid_profile_configs(tmp_path):
     token = _credential(tmp_path / "token", "default-token-value")
     _write_profile(tmp_path, "default", _config(token))
-    _write_profile(tmp_path, "kit-main", _config(token))
+    _write_profile(tmp_path, "example-main", _config(token))
     _write_profile(tmp_path, "INVALID.NAME", _config(token))
-    nested = tmp_path / "profiles" / "kit-main" / "profiles" / "nested"
+    nested = tmp_path / "profiles" / "example-main" / "profiles" / "nested"
     nested.mkdir(parents=True)
     (nested / "config.yaml").write_text("{}")
 
     assert [(name, path.name) for name, path in discover_profile_config_paths(tmp_path)] == [
         ("default", "config.yaml"),
-        ("kit-main", "config.yaml"),
+        ("example-main", "config.yaml"),
     ]
 
 
 def test_all_profile_identity_validation_accepts_unique_material(tmp_path):
     default_token = _credential(tmp_path / "default.token", "default-token-value")
     default_seal = _credential(tmp_path / "default.seal", SEAL_PRIVATE_KEY)
-    kit_token = _credential(tmp_path / "kit.token", "kit-token-value")
-    kit_seal = _credential(
-        tmp_path / "kit.seal",
+    example_token = _credential(tmp_path / "example.token", "example-token-value")
+    example_seal = _credential(
+        tmp_path / "example.seal",
         "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
     )
     _write_profile(tmp_path, "default", _config(default_token, seal_key_file=default_seal))
-    _write_profile(tmp_path, "kit-main", _config(kit_token, seal_key_file=kit_seal))
+    _write_profile(tmp_path, "example-main", _config(example_token, seal_key_file=example_seal))
 
     snapshots = load_profile_snapshots(tmp_path, yaml_load=json.loads)
     configured = validate_profile_identity_uniqueness(snapshots)
-    assert [profile.name for profile in configured] == ["default", "kit-main"]
+    assert [profile.name for profile in configured] == ["default", "example-main"]
 
 
 @pytest.mark.parametrize("material", ["token", "seal"])
@@ -96,14 +96,14 @@ def test_all_profile_identity_validation_rejects_duplicate_material_without_leak
         SEAL_PRIVATE_KEY if material == "seal" else "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
     )
     _write_profile(tmp_path, "default", _config(token_a, seal_key_file=seal_a))
-    _write_profile(tmp_path, "kit-main", _config(token_b, seal_key_file=seal_b))
+    _write_profile(tmp_path, "example-main", _config(token_b, seal_key_file=seal_b))
 
     snapshots = load_profile_snapshots(tmp_path, yaml_load=json.loads)
     with pytest.raises(IdentityError) as caught:
         validate_profile_identity_uniqueness(snapshots)
     payload = str(caught.value.to_payload().as_dict())
     assert caught.value.code == "PHOENIX_DUPLICATE_IDENTITY_MATERIAL"
-    assert "default" in payload and "kit-main" in payload
+    assert "default" in payload and "example-main" in payload
     assert "shared-token-value" not in payload
     assert str(token_a) not in payload
     assert str(seal_a) not in payload
@@ -117,7 +117,7 @@ def test_all_profile_identity_validation_rejects_duplicate_mtls_private_keys(tmp
     key_a = _credential(tmp_path / "a.key", "synthetic-shared-private-key")
     key_b = _credential(tmp_path / "b.key", "synthetic-shared-private-key")
     _write_profile(tmp_path, "default", _mtls_config(cert_a, key_a))
-    _write_profile(tmp_path, "kit-main", _mtls_config(cert_b, key_b))
+    _write_profile(tmp_path, "example-main", _mtls_config(cert_b, key_b))
 
     snapshots = load_profile_snapshots(tmp_path, yaml_load=json.loads)
     with pytest.raises(IdentityError) as caught:
@@ -132,13 +132,13 @@ def test_all_profile_identity_validation_rejects_duplicate_mtls_private_keys(tmp
 def test_all_profile_identity_validation_fails_closed_on_insecure_material_without_path(tmp_path):
     token = _credential(tmp_path / "insecure.token", "profile-token-value")
     token.chmod(0o644)
-    _write_profile(tmp_path, "kit-main", _config(token))
+    _write_profile(tmp_path, "example-main", _config(token))
     snapshots = load_profile_snapshots(tmp_path, yaml_load=json.loads)
     with pytest.raises(IdentityError) as caught:
         validate_profile_identity_uniqueness(snapshots)
     payload = str(caught.value.to_payload().as_dict())
     assert caught.value.code == "PHOENIX_IDENTITY_MATERIAL_UNREADABLE"
-    assert "kit-main" in payload
+    assert "example-main" in payload
     assert str(token) not in payload
     assert "profile-token-value" not in payload
 
@@ -149,11 +149,11 @@ def test_valid_named_symlink_profile_directory_fails_closed(tmp_path):
     target = tmp_path / "external-profile"
     target.mkdir()
     (target / "config.yaml").write_text("{}")
-    os.symlink(target, profiles / "kit-main")
+    os.symlink(target, profiles / "example-main")
     with pytest.raises(ConfigurationError) as caught:
         discover_profile_config_paths(tmp_path)
     assert caught.value.code == "PHOENIX_PROFILE_CONFIG_INVALID"
-    assert "kit-main" in str(caught.value)
+    assert "example-main" in str(caught.value)
     assert str(target) not in str(caught.value.to_payload().as_dict())
 
 

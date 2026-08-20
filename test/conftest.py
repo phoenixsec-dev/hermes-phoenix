@@ -32,8 +32,8 @@ class StubPhoenix:
         self.deny_session_renewal = False
         self.list_payload: dict[str, Any] = {
             "paths": [
-                "services/hermes/kit-main/calendar/password",
-                "services/hermes/kit-main/storage/token",
+                "services/hermes/example-main/calendar/password",
+                "services/hermes/example-main/storage/token",
             ]
         }
         owner = self
@@ -48,7 +48,7 @@ class StubPhoenix:
                         self._reply(200, {"allowed": False})
                     else:
                         self._reply(401, {"error": "unauthorized", "code": "UNAUTHORIZED"})
-                elif self.path == "/v1/secrets/services/hermes/kit-main/":
+                elif self.path == "/v1/secrets/services/hermes/example-main/":
                     self._reply(200, owner.list_payload)
                 elif self.path.startswith("/non-json"):
                     self._raw(200, b"secret-looking response that must not escape", "text/plain")
@@ -126,8 +126,8 @@ class StubPhoenix:
                 elif self.path.startswith("/v1/resolve") and isinstance(body, dict):
                     refs = body.get("refs", [])
                     errors = (
-                        {"phoenix://services/hermes/kit-main/missing": "secret-looking server diagnostic"}
-                        if "phoenix://services/hermes/kit-main/missing" in refs
+                        {"phoenix://services/hermes/example-main/missing": "secret-looking server diagnostic"}
+                        if "phoenix://services/hermes/example-main/missing" in refs
                         else {}
                     )
                     successful_refs = [ref for ref in refs if ref not in errors]

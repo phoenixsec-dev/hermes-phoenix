@@ -71,7 +71,7 @@ plugins:
   enabled: [phoenix]
   entries:
     phoenix:
-      server: "https://192.168.0.118:9090"
+      server: "https://phoenix.example:9090"
       token_file: "~/.config/phoenix/token-my-profile"
       role: "hermes-my-profile-runtime"  # optional non-step-up role
       ca_file: "~/.config/phoenix/ca.crt"
@@ -152,7 +152,7 @@ secrets:
   phoenix:
     enabled: true
     env:
-      NEXTCLOUD_CALDAV_APP_PASSWORD: "phoenix://services/my-profile/caldav-password"
+      EXAMPLE_CALDAV_APP_PASSWORD: "phoenix://services/my-profile/caldav-password"
     timeout_seconds: 20
     override_existing: false
 ```

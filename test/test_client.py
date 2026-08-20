@@ -26,7 +26,7 @@ def _config(stub_phoenix, tmp_path, **extra):
     return load_plugin_config(
         raw={"server": stub_phoenix.url, "token_file": str(token), **extra},
         environ={},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
 
 
@@ -34,7 +34,7 @@ def test_status_authenticates_and_sends_sanitized_audit_headers(stub_phoenix, tm
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     result = client.status(
         caller=CallerContext(
-            profile="kit-main\nforged",
+            profile="example-main\nforged",
             session_id="session-1",
             channel="telegram",
             tool="phoenix_status",
@@ -46,7 +46,7 @@ def test_status_authenticates_and_sends_sanitized_audit_headers(stub_phoenix, tm
     assert "secret-looking" not in str(result)
     policy_request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/policy/check"))
     assert policy_request["headers"]["Authorization"] == "Bearer test-bootstrap-token"
-    assert policy_request["headers"]["X-Hermes-Profile"] == "kit-main forged"
+    assert policy_request["headers"]["X-Hermes-Profile"] == "example-main forged"
     assert policy_request["headers"]["X-Hermes-Tool"] == "phoenix_status"
     assert policy_request["headers"]["X-Phoenix-Tool"] == "phoenix_status"
     assert policy_request["headers"]["X-Hermes-Task-Id"] == "task-1"
@@ -55,7 +55,7 @@ def test_status_authenticates_and_sends_sanitized_audit_headers(stub_phoenix, tm
 def test_client_registers_runtime_bearer_with_scrubber(stub_phoenix, tmp_path):
     PhoenixClient(_config(stub_phoenix, tmp_path))
     assert get_scrub_registry().scrub("leak test-bootstrap-token now") == (
-        "leak [PHOENIX-SCRUBBED:kit-main-phoenix-token] now"
+        "leak [PHOENIX-SCRUBBED:example-main-phoenix-token] now"
     )
 
 
@@ -112,12 +112,12 @@ def test_status_with_role_and_invalid_seal_key_uses_bootstrap_and_remains_availa
         _config(
             stub_phoenix,
             tmp_path,
-            role="kit-runtime",
+            role="example-runtime",
             seal_mode=True,
             seal_key_file=str(tmp_path / "missing-seal.key"),
         )
     )
-    result = client.status(caller=CallerContext(profile="kit-main", tool="phoenix_status"))
+    result = client.status(caller=CallerContext(profile="example-main", tool="phoenix_status"))
     assert result["ok"] is True
     assert result["seal_configuration"] == {"key": "invalid"}
     assert stub_phoenix.session_mint_count == 0
@@ -135,12 +135,12 @@ def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_p
 
 def test_list_returns_only_paths_under_normalized_prefix(stub_phoenix, tmp_path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
-    result = client.list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    result = client.list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
     assert result == {
-        "prefix": "services/hermes/kit-main/",
+        "prefix": "services/hermes/example-main/",
         "paths": [
-            "services/hermes/kit-main/calendar/password",
-            "services/hermes/kit-main/storage/token",
+            "services/hermes/example-main/calendar/password",
+            "services/hermes/example-main/storage/token",
         ],
     }
     request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/"))
@@ -151,20 +151,20 @@ def test_resolve_normalizes_refs_and_hides_server_error_text(stub_phoenix, tmp_p
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     result = client.resolve(
         ["calendar/password", "missing"],
-        caller=CallerContext(profile="kit-main", tool="phoenix_resolve"),
+        caller=CallerContext(profile="example-main", tool="phoenix_resolve"),
     )
     assert result["mode"] == "plaintext"
     assert result["values"] == {
-        "phoenix://services/hermes/kit-main/calendar/password": "synthetic-secret-value"
+        "phoenix://services/hermes/example-main/calendar/password": "synthetic-secret-value"
     }
     assert result["errors"] == {
-        "phoenix://services/hermes/kit-main/missing": "Phoenix did not resolve this ref."
+        "phoenix://services/hermes/example-main/missing": "Phoenix did not resolve this ref."
     }
     assert "secret-looking" not in str(result)
     request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve")
     assert request["body"]["refs"] == [
-        "phoenix://services/hermes/kit-main/calendar/password",
-        "phoenix://services/hermes/kit-main/missing",
+        "phoenix://services/hermes/example-main/calendar/password",
+        "phoenix://services/hermes/example-main/missing",
     ]
     assert request["headers"]["X-Hermes-Tool"] == "phoenix_resolve"
 
@@ -175,12 +175,12 @@ def test_resolve_rejects_response_refs_that_were_not_requested(stub_phoenix, tmp
         client,
         "_request_json",
         lambda *_args, **_kwargs: {
-            "values": {"phoenix://services/hermes/kit-main/other": "must-not-escape"},
+            "values": {"phoenix://services/hermes/example-main/other": "must-not-escape"},
             "errors": {},
         },
     )
     with pytest.raises(ApiError) as caught:
-        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+        client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
     assert "must-not-escape" not in str(caught.value)
 
@@ -189,17 +189,17 @@ def test_resolve_rejects_response_refs_that_were_not_requested(stub_phoenix, tmp
 def test_list_treats_null_or_absent_paths_as_empty(stub_phoenix, tmp_path, monkeypatch, payload):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
-    assert client.list(caller=CallerContext(profile="kit-main")) == {
-        "prefix": "services/hermes/kit-main/",
+    assert client.list(caller=CallerContext(profile="example-main")) == {
+        "prefix": "services/hermes/example-main/",
         "paths": [],
     }
 
 
 def test_list_preserves_legal_server_path_characters(stub_phoenix, tmp_path, monkeypatch):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
-    path = "services/hermes/kit-main/calendar/2026 summer+east:token"
+    path = "services/hermes/example-main/calendar/2026 summer+east:token"
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
-    assert client.list(caller=CallerContext(profile="kit-main"))["paths"] == [path]
+    assert client.list(caller=CallerContext(profile="example-main"))["paths"] == [path]
 
 
 @pytest.mark.parametrize("paths", ["not-a-list", [123]])
@@ -207,7 +207,7 @@ def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": paths})
     with pytest.raises(ApiError) as caught:
-        client.list(caller=CallerContext(profile="kit-main"))
+        client.list(caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
 
 
@@ -215,17 +215,17 @@ def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths
     "path",
     [
         "other/key",
-        "services/hermes/kit-main/../other/secret",
-        "services/hermes/kit-main/./secret",
-        "services/hermes/kit-main/forged\npath",
-        "services/hermes/kit-main/forged\x85path",
+        "services/hermes/example-main/../other/secret",
+        "services/hermes/example-main/./secret",
+        "services/hermes/example-main/forged\npath",
+        "services/hermes/example-main/forged\x85path",
     ],
 )
 def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monkeypatch, path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
     with pytest.raises(ApiError) as caught:
-        client.list(caller=CallerContext(profile="kit-main"))
+        client.list(caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
 
 
@@ -233,16 +233,16 @@ def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monk
     "payload",
     [
         {"values": [], "errors": {}},
-        {"values": {"phoenix://services/hermes/kit-main/calendar/password": 123}, "errors": {}},
+        {"values": {"phoenix://services/hermes/example-main/calendar/password": 123}, "errors": {}},
         {"values": {}, "errors": []},
-        {"values": {}, "errors": {"phoenix://services/hermes/kit-main/calendar/password": 123}},
+        {"values": {}, "errors": {"phoenix://services/hermes/example-main/calendar/password": 123}},
     ],
 )
 def test_resolve_rejects_malformed_value_and_error_maps(stub_phoenix, tmp_path, monkeypatch, payload):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
     with pytest.raises(ApiError) as caught:
-        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+        client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
 
 
@@ -253,9 +253,9 @@ def test_sealed_resolve_sends_public_key_and_returns_only_opaque_tokens(stub_pho
     client = PhoenixClient(
         _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
     )
-    result = client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+    result = client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert result["mode"] == "sealed"
-    token = result["values"]["phoenix://services/hermes/kit-main/calendar/password"]
+    token = result["values"]["phoenix://services/hermes/example-main/calendar/password"]
     assert token.startswith("PHOENIX_SEALED:")
     assert "synthetic-secret-value" not in str(result)
     request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve")
@@ -273,12 +273,12 @@ def test_sealed_resolve_rejects_plaintext_only_http_200_without_leaking_it(stub_
         client,
         "_request_json",
         lambda *_args, **_kwargs: {
-            "values": {"phoenix://services/hermes/kit-main/calendar/password": "must-not-escape"},
+            "values": {"phoenix://services/hermes/example-main/calendar/password": "must-not-escape"},
             "errors": {},
         },
     )
     with pytest.raises(SealedResponseError) as caught:
-        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+        client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_SEALED_VALUES_MISSING"
     assert "must-not-escape" not in str(caught.value.to_payload().as_dict())
 
@@ -289,11 +289,11 @@ def test_sealed_resolve_rejects_plaintext_only_http_200_without_leaking_it(stub_
         {"sealed_values": []},
         {
             "sealed_values": {
-                "phoenix://services/hermes/kit-main/calendar/password": {
+                "phoenix://services/hermes/example-main/calendar/password": {
                     "version": 1,
                     "algorithm": "wrong",
-                    "path": "services/hermes/kit-main/calendar/password",
-                    "ref": "phoenix://services/hermes/kit-main/calendar/password",
+                    "path": "services/hermes/example-main/calendar/password",
+                    "ref": "phoenix://services/hermes/example-main/calendar/password",
                     "ephemeral_key": "must-not-escape",
                     "nonce": "must-not-escape",
                     "ciphertext": "must-not-escape",
@@ -302,11 +302,11 @@ def test_sealed_resolve_rejects_plaintext_only_http_200_without_leaking_it(stub_
         },
         {
             "sealed_values": {
-                "phoenix://services/hermes/kit-main/other": {
+                "phoenix://services/hermes/example-main/other": {
                     "version": 1,
                     "algorithm": "x25519-xsalsa20-poly1305",
-                    "path": "services/hermes/kit-main/other",
-                    "ref": "phoenix://services/hermes/kit-main/other",
+                    "path": "services/hermes/example-main/other",
+                    "ref": "phoenix://services/hermes/example-main/other",
                     "ephemeral_key": "must-not-escape",
                     "nonce": "must-not-escape",
                     "ciphertext": "must-not-escape",
@@ -324,7 +324,7 @@ def test_sealed_resolve_rejects_malformed_or_mismatched_envelopes(stub_phoenix, 
     )
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
     with pytest.raises(SealedResponseError) as caught:
-        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+        client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_SEALED_VALUES_INVALID"
     assert "must-not-escape" not in str(caught.value.to_payload().as_dict())
 
@@ -338,12 +338,12 @@ def test_sealed_dry_run_sends_handshake_but_accepts_plaintext_ok_status(stub_pho
     )
     result = client.resolve(
         ["calendar/password"],
-        caller=CallerContext(profile="kit-main"),
+        caller=CallerContext(profile="example-main"),
         dry_run=True,
     )
     assert result == {
         "mode": "dry_run",
-        "values": {"phoenix://services/hermes/kit-main/calendar/password": "ok"},
+        "values": {"phoenix://services/hermes/example-main/calendar/password": "ok"},
         "errors": {},
     }
     request = next(item for item in stub_phoenix.requests if item["path"] == "/v1/resolve?dry_run=true")
@@ -358,7 +358,7 @@ def test_missing_or_malformed_seal_key_fails_resolve_before_network(stub_phoenix
         _config(stub_phoenix, tmp_path, seal_mode=True, seal_key_file=str(seal_key))
     )
     with pytest.raises(IdentityError) as caught:
-        client.resolve(["calendar/password"], caller=CallerContext(profile="kit-main"))
+        client.resolve(["calendar/password"], caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_SEAL_KEY_INVALID"
     assert not any(item["path"].startswith("/v1/resolve") for item in stub_phoenix.requests)
 
@@ -396,9 +396,9 @@ def test_redirects_are_not_followed(stub_phoenix, tmp_path):
 
 
 def test_role_session_mints_once_and_reuses_in_memory_token(stub_phoenix, tmp_path):
-    config = _config(stub_phoenix, tmp_path, role="kit-runtime")
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    config = _config(stub_phoenix, tmp_path, role="example-runtime")
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
     assert stub_phoenix.session_mint_count == 1
     assert stub_phoenix.session_renew_count == 0
     list_requests = [item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/")]
@@ -415,13 +415,13 @@ def test_sealed_role_session_binds_and_reuses_public_key(stub_phoenix, tmp_path)
     config = _config(
         stub_phoenix,
         tmp_path,
-        role="kit-runtime",
+        role="example-runtime",
         seal_mode=True,
         seal_key_file=str(seal_key),
     )
     result = PhoenixClient(config).resolve(
         ["calendar/password"],
-        caller=CallerContext(profile="kit-main", tool="phoenix_resolve"),
+        caller=CallerContext(profile="example-main", tool="phoenix_resolve"),
     )
     assert result["mode"] == "sealed"
     mint = next(item for item in stub_phoenix.requests if item["path"] == "/v1/session/mint")
@@ -434,13 +434,13 @@ def test_sealed_role_session_binds_and_reuses_public_key(stub_phoenix, tmp_path)
 
 def test_role_session_renews_near_expiry_and_registers_token_scrubbing(stub_phoenix, tmp_path):
     stub_phoenix.session_ttl_seconds = 60
-    config = _config(stub_phoenix, tmp_path, role="kit-runtime")
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main", tool="phoenix_list"))
+    config = _config(stub_phoenix, tmp_path, role="example-runtime")
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
     assert stub_phoenix.session_mint_count == 1
     assert stub_phoenix.session_renew_count == 1
     assert get_scrub_registry().scrub("phxs_renewed-1") == (
-        "[PHOENIX-SCRUBBED:kit-main-phoenix-session]"
+        "[PHOENIX-SCRUBBED:example-main-phoenix-session]"
     )
 
 
@@ -449,10 +449,10 @@ def test_expired_role_session_is_reminted(stub_phoenix, tmp_path, monkeypatch):
 
     now = [datetime.now(UTC)]
     monkeypatch.setattr(session_module, "_utcnow", lambda: now[0])
-    config = _config(stub_phoenix, tmp_path, role="kit-runtime")
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    config = _config(stub_phoenix, tmp_path, role="example-runtime")
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     now[0] += timedelta(hours=2)
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     assert stub_phoenix.session_mint_count == 2
     assert stub_phoenix.session_renew_count == 0
 
@@ -468,27 +468,27 @@ def test_mtls_identity_rotation_at_same_paths_forces_fresh_role_mint(stub_phoeni
             "server": stub_phoenix.url,
             "client_cert": str(cert),
             "client_key": str(key),
-            "role": "kit-runtime",
-            "default_namespace": "services/hermes/kit-main",
+            "role": "example-runtime",
+            "default_namespace": "services/hermes/example-main",
         },
         environ={},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
     monkeypatch.setattr(
         PhoenixClient,
         "_build_opener",
         lambda _self: urllib.request.build_opener(urllib.request.ProxyHandler({})),
     )
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     cert.write_text("synthetic-certificate-version-two")
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     assert stub_phoenix.session_mint_count == 2
 
 
 def test_role_session_approval_required_fails_closed_without_polling(stub_phoenix, tmp_path):
     config = _config(stub_phoenix, tmp_path, role="approval-role")
     with pytest.raises(ApprovalRequiredError) as caught:
-        PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+        PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     payload = caught.value.to_payload().as_dict()
     assert payload["type"] == "approval_required"
     assert payload["code"] == "PHOENIX_APPROVAL_REQUIRED"
@@ -500,7 +500,7 @@ def test_role_session_approval_required_fails_closed_without_polling(stub_phoeni
 def test_role_session_mint_and_renewal_denials_do_not_leak_tokens_or_server_text(stub_phoenix, tmp_path):
     denied_config = _config(stub_phoenix, tmp_path, role="denied-role")
     with pytest.raises(ApiError) as mint_caught:
-        PhoenixClient(denied_config).list(caller=CallerContext(profile="kit-main"))
+        PhoenixClient(denied_config).list(caller=CallerContext(profile="example-main"))
     mint_payload = str(mint_caught.value.to_payload().as_dict())
     assert mint_caught.value.code == "PHOENIX_SESSION_MINT_DENIED"
     assert "secret-looking" not in mint_payload
@@ -508,10 +508,10 @@ def test_role_session_mint_and_renewal_denials_do_not_leak_tokens_or_server_text
 
     stub_phoenix.session_ttl_seconds = 60
     config = _config(stub_phoenix, tmp_path, role="renew-denied-role")
-    PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+    PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     stub_phoenix.deny_session_renewal = True
     with pytest.raises(ApiError) as renew_caught:
-        PhoenixClient(config).list(caller=CallerContext(profile="kit-main"))
+        PhoenixClient(config).list(caller=CallerContext(profile="example-main"))
     renew_payload = str(renew_caught.value.to_payload().as_dict())
     assert renew_caught.value.code == "PHOENIX_SESSION_RENEW_DENIED"
     assert "secret-looking" not in renew_payload

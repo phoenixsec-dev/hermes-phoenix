@@ -10,7 +10,7 @@ plugins:
   enabled: [phoenix]
   entries:
     phoenix:
-      server: "https://phoenix.example.internal:9090"
+      server: "https://phoenix.example:9090"
       token_file: "~/.config/phoenix/token-example-profile"
       # Optional non-step-up role: the token above only mints a scoped
       # in-memory session; runtime requests use the session token.

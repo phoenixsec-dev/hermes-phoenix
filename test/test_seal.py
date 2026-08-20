@@ -18,7 +18,7 @@ from hermes_phoenix.seal import (
 
 PRIVATE_KEY = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="
 PUBLIC_KEY = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo="
-REF = "phoenix://services/hermes/kit-main/calendar/password"
+REF = "phoenix://services/hermes/example-main/calendar/password"
 
 
 def _key_file(tmp_path, content=PRIVATE_KEY, mode=0o600):

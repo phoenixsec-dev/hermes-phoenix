@@ -17,12 +17,12 @@ def _loader(stub_phoenix, tmp_path, *, enable_resolve=False, **extra):
         raw={
             "server": stub_phoenix.url,
             "token_file": str(token),
-            "default_namespace": "services/hermes/kit-main",
+            "default_namespace": "services/hermes/example-main",
             "enable_resolve": enable_resolve,
             **extra,
         },
         environ={},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
     return lambda: config
 
@@ -37,7 +37,7 @@ def test_list_handler_returns_paths_without_values(stub_phoenix, tmp_path):
     )
     assert payload["ok"] is True
     assert payload["count"] == 2
-    assert payload["prefix"] == "services/hermes/kit-main/"
+    assert payload["prefix"] == "services/hermes/example-main/"
     assert "synthetic-secret-value" not in str(payload)
     request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/"))
     assert "X-Hermes-Channel" not in request["headers"]
@@ -51,7 +51,7 @@ def test_list_handler_treats_null_paths_as_successful_empty_result(stub_phoenix,
         "count": 0,
         "ok": True,
         "paths": [],
-        "prefix": "services/hermes/kit-main/",
+        "prefix": "services/hermes/example-main/",
     }
 
 
@@ -68,7 +68,7 @@ def test_resolve_handler_reports_partial_plaintext_result(stub_phoenix, tmp_path
     assert payload["requested"] == 2
     assert payload["resolved"] == 1
     assert payload["values"] == {
-        "phoenix://services/hermes/kit-main/calendar/password": "synthetic-secret-value"
+        "phoenix://services/hermes/example-main/calendar/password": "synthetic-secret-value"
     }
     assert "secret-looking" not in str(payload)
 
@@ -79,7 +79,7 @@ def test_direct_unsealed_resolve_remains_plaintext_but_registers_subsequent_scru
             {"refs": ["calendar/password"]}
         )
     )
-    assert payload["values"]["phoenix://services/hermes/kit-main/calendar/password"] == "synthetic-secret-value"
+    assert payload["values"]["phoenix://services/hermes/example-main/calendar/password"] == "synthetic-secret-value"
     assert get_scrub_registry().scrub("later synthetic-secret-value output") == (
         "later [PHOENIX-SCRUBBED:password] output"
     )
@@ -102,7 +102,7 @@ def test_sealed_resolve_handler_returns_no_plaintext(stub_phoenix, tmp_path):
     )
     assert payload["ok"] is True
     assert payload["mode"] == "sealed"
-    assert payload["values"]["phoenix://services/hermes/kit-main/calendar/password"].startswith(
+    assert payload["values"]["phoenix://services/hermes/example-main/calendar/password"].startswith(
         "PHOENIX_SEALED:"
     )
     assert "synthetic-secret-value" not in str(payload)

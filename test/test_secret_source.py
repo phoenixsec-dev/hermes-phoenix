@@ -76,17 +76,17 @@ def _config(stub_phoenix, tmp_path, **extra):
         raw={
             "server": stub_phoenix.url,
             "token_file": str(token),
-            "default_namespace": "services/hermes/kit-main",
+            "default_namespace": "services/hermes/example-main",
             **extra,
         },
         environ={},
-        profile_name="kit-main",
+        profile_name="example-main",
     )
 
 
 def test_secret_source_matches_api_v1_and_fetches_without_disk_cache(monkeypatch, stub_phoenix, tmp_path):
     ErrorKind, _FetchResult, SecretSource = _install_fake_hermes_contract(monkeypatch)
-    config = _config(stub_phoenix, tmp_path, seal_mode=False, role="kit-runtime")
+    config = _config(stub_phoenix, tmp_path, seal_mode=False, role="example-runtime")
     source = make_phoenix_secret_source(lambda: config)
     assert isinstance(source, SecretSource)
     assert (source.api_version, source.name, source.label, source.shape, source.scheme) == (
@@ -104,7 +104,7 @@ def test_secret_source_matches_api_v1_and_fetches_without_disk_cache(monkeypatch
             "enabled": True,
             "timeout_seconds": 20,
             "env": {
-                "CALDAV_PASSWORD": "phoenix://services/hermes/kit-main/calendar/password",
+                "CALDAV_PASSWORD": "phoenix://services/hermes/example-main/calendar/password",
             },
         },
         home,
