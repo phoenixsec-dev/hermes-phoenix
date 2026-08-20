@@ -24,16 +24,17 @@ classifiers = [
 ]
 dependencies = [
   "PyNaCl>=1.5,<2",
+  # `hermes phoenix verify --all-profiles` reads profile config.yaml files, so
+  # this is genuinely required rather than inherited from the host Hermes
+  # install. The import in load_profile_snapshots() stays lazy and still
+  # degrades to a clear PHOENIX_PROFILE_CONFIG_INVALID, but declaring it means a
+  # standalone install actually works instead of failing on a missing package.
+  "PyYAML>=6,<7",
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest>=8,<9",
-  # Not a runtime dependency: load_profile_snapshots() imports yaml lazily and
-  # degrades to a clear PHOENIX_PROFILE_CONFIG_INVALID when it is absent, on the
-  # assumption that a real Hermes install already provides it. The tests that
-  # exercise that real import path (rather than injecting yaml_load) do need it.
-  "PyYAML>=6,<7",
 ]
 
 [project.entry-points."hermes_agent.plugins"]
