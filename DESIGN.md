@@ -201,7 +201,10 @@ client-side refusal here is not a security boundary (any other client
 could still connect in plaintext); the real controls are enabling TLS
 on the server for the wire and `require_sealed` policy for values
 (§6). Consistency of signal across all three packages — warn loudly
-on non-loopback plaintext, never refuse — is the point.
+on non-loopback plaintext, never refuse — is the point. The server's
+own startup warning and its first-class `tls:` block ship in Phoenix
+`v0.17.0`; this plugin's warning is client-side and is emitted against
+any supported server, including ones that stay silent themselves.
 
 ## 8. Value-aware output scrubbing
 
