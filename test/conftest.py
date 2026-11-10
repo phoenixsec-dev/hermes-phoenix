@@ -36,6 +36,20 @@ class StubPhoenix:
                 "services/hermes/example-main/storage/token",
             ]
         }
+        # What GET /v1/metadata/ returns. Set old_server to answer the plain
+        # 404 a Phoenix server without that route sends.
+        self.metadata_payload: dict[str, Any] = {
+            "secrets": [
+                {
+                    "path": "services/hermes/example-main/calendar/password",
+                    "description": "Calendar login",
+                    "tags": ["calendar"],
+                    "updated_by": "example-admin",
+                },
+                {"path": "services/hermes/example-main/storage/token", "description": ""},
+            ]
+        }
+        self.old_server = False
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -48,6 +62,13 @@ class StubPhoenix:
                         self._reply(200, {"allowed": False})
                     else:
                         self._reply(401, {"error": "unauthorized", "code": "UNAUTHORIZED"})
+                elif self.path.startswith("/v1/metadata/"):
+                    if owner.old_server:
+                        self._raw(404, b"404 page not found\n", "text/plain; charset=utf-8")
+                    elif self.path == "/v1/metadata/services/hermes/example-main/":
+                        self._reply(200, owner.metadata_payload)
+                    else:
+                        self._reply(404, {"error": "not found"})
                 elif self.path == "/v1/secrets/services/hermes/example-main/":
                     self._reply(200, owner.list_payload)
                 elif self.path.startswith("/non-json"):

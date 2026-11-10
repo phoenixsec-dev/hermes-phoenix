@@ -42,6 +42,7 @@ _MAX_RESPONSE_BYTES = 1024 * 1024
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _RUNTIME_AUTH = object()
+_ROUTE_NOT_FOUND = "PHOENIX_ROUTE_NOT_FOUND"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,25 @@ def _audit_value(value: str | None) -> str | None:
         return None
     cleaned = " ".join(_CONTROL_RE.sub(" ", value).split())[:256]
     return cleaned or None
+
+
+def _invalid_list_response() -> ApiError:
+    return ApiError("Phoenix list response was invalid", status=200, code="PHOENIX_RESPONSE_INVALID")
+
+
+def _checked_list_path(path: str, normalized_prefix: str) -> str:
+    """Return a listed path, or fail if the server sent one outside the folder asked for."""
+    if (
+        not path.startswith(normalized_prefix)
+        or _CONTROL_RE.search(path)
+        or any(segment in {".", ".."} for segment in path.split("/"))
+    ):
+        raise ApiError(
+            "Phoenix list response contained a path outside the requested prefix",
+            status=200,
+            code="PHOENIX_RESPONSE_INVALID",
+        )
+    return path
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -294,6 +314,14 @@ class PhoenixClient:
                     status=exc.code,
                     code="PHOENIX_RESPONSE_TOO_LARGE",
                 ) from exc
+            if exc.code == 404 and not raw.strip().startswith(b"{"):
+                # The server's router, not a handler, answered: the route does
+                # not exist on this server version (handlers answer JSON 404s).
+                raise ApiError(
+                    "Phoenix server does not have this API route",
+                    status=404,
+                    code=_ROUTE_NOT_FOUND,
+                ) from exc
             code = "PHOENIX_AUTH_REJECTED" if exc.code in {401, 403} else "PHOENIX_HTTP_ERROR"
             raise ApiError(
                 f"Phoenix request failed with HTTP {exc.code}",
@@ -387,36 +415,58 @@ class PhoenixClient:
                 raise ConfigurationError("seal_mode requires seal_key_file", code="PHOENIX_SEAL_KEY_INVALID")
             role_seal_public_key = build_seal_header(self.config.seal_key_file)
             request_headers = {"X-Phoenix-Seal-Key": role_seal_public_key}
-        payload = self._request_json(
-            "GET",
-            f"/v1/secrets/{encoded_prefix}",
-            caller=caller,
-            request_headers=request_headers,
-            role_seal_public_key=role_seal_public_key,
-        )
-        raw_paths = payload.get("paths")
-        if raw_paths is None:
-            raw_paths = []
-        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
-            raise ApiError(
-                "Phoenix list response was invalid",
-                status=200,
-                code="PHOENIX_RESPONSE_INVALID",
+
+        def get(path: str) -> Mapping[str, Any]:
+            return self._request_json(
+                "GET",
+                path,
+                caller=caller,
+                request_headers=request_headers,
+                role_seal_public_key=role_seal_public_key,
             )
-        paths: list[str] = []
-        for path in raw_paths:
-            if (
-                not path.startswith(normalized_prefix)
-                or _CONTROL_RE.search(path)
-                or any(segment in {".", ".."} for segment in path.split("/"))
-            ):
-                raise ApiError(
-                    "Phoenix list response contained a path outside the requested prefix",
-                    status=200,
-                    code="PHOENIX_RESPONSE_INVALID",
-                )
-            paths.append(path)
-        return {"prefix": normalized_prefix, "paths": paths}
+
+        try:
+            payload = get(f"/v1/metadata/{encoded_prefix}")
+        except ApiError as exc:
+            if exc.code != _ROUTE_NOT_FOUND:
+                raise
+            # Server predates /v1/metadata: list bare paths, like the CLI does.
+            payload = get(f"/v1/secrets/{encoded_prefix}")
+            raw_paths = payload.get("paths")
+            if raw_paths is None:
+                raw_paths = []
+            if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+                raise _invalid_list_response() from None
+            return {
+                "prefix": normalized_prefix,
+                "descriptions": False,
+                "secrets": [
+                    {"path": _checked_list_path(path, normalized_prefix), "description": ""}
+                    for path in raw_paths
+                ],
+            }
+        raw_secrets = payload.get("secrets")
+        if raw_secrets is None:
+            raw_secrets = []
+        if not isinstance(raw_secrets, list):
+            raise _invalid_list_response()
+        secrets: list[dict[str, str]] = []
+        for entry in raw_secrets:
+            # Copy only path and description; every other field is dropped.
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise _invalid_list_response()
+            description = entry.get("description")
+            if description is None:
+                description = ""
+            if not isinstance(description, str):
+                raise _invalid_list_response()
+            secrets.append(
+                {
+                    "path": _checked_list_path(entry["path"], normalized_prefix),
+                    "description": " ".join(_CONTROL_RE.sub(" ", description).split()),
+                }
+            )
+        return {"prefix": normalized_prefix, "descriptions": True, "secrets": secrets}
 
     @staticmethod
     def _sealed_contract_error(code: str) -> SealedResponseError:

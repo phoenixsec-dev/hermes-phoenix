@@ -35,24 +35,39 @@ def test_list_handler_returns_paths_without_values(stub_phoenix, tmp_path):
             platform="telegram",
         )
     )
-    assert payload["ok"] is True
-    assert payload["count"] == 2
-    assert payload["prefix"] == "services/hermes/example-main/"
-    assert "synthetic-secret-value" not in str(payload)
-    request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/"))
+    assert payload == {
+        "count": 2,
+        "ok": True,
+        "prefix": "services/hermes/example-main/",
+        "secrets": [
+            {"path": "services/hermes/example-main/calendar/password", "description": "Calendar login"},
+            {"path": "services/hermes/example-main/storage/token", "description": ""},
+        ],
+    }
+    request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/metadata/"))
     assert "X-Hermes-Channel" not in request["headers"]
     assert request["headers"]["X-Phoenix-Tool"] == "phoenix_list"
 
 
-def test_list_handler_treats_null_paths_as_successful_empty_result(stub_phoenix, tmp_path):
+def test_list_handler_notes_paths_only_on_old_server(stub_phoenix, tmp_path):
+    stub_phoenix.old_server = True
     stub_phoenix.list_payload = {"paths": None}
     payload = json.loads(make_list_handler(_loader(stub_phoenix, tmp_path))({}))
     assert payload == {
         "count": 0,
         "ok": True,
-        "paths": [],
+        "secrets": [],
         "prefix": "services/hermes/example-main/",
+        "note": "This Phoenix server is too old to return descriptions; paths only.",
     }
+
+
+def test_list_handler_rejects_wildcard_before_any_request(stub_phoenix, tmp_path):
+    payload = json.loads(make_list_handler(_loader(stub_phoenix, tmp_path))({"prefix": "calendar*"}))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "PHOENIX_LIST_WILDCARD"
+    assert "services/browser/*" in payload["error"]["error"]
+    assert stub_phoenix.requests == []
 
 
 def test_resolve_handler_reports_partial_plaintext_result(stub_phoenix, tmp_path):

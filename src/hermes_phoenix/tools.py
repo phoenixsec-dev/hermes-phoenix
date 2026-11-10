@@ -31,13 +31,19 @@ PHOENIX_STATUS_SCHEMA: dict[str, Any] = {
 
 PHOENIX_LIST_SCHEMA: dict[str, Any] = {
     "name": "phoenix_list",
-    "description": "List Phoenix secret paths visible under a prefix. Never returns secret values.",
+    "description": (
+        "List the secrets in a Phoenix folder and what each one is for (its description). "
+        "Never returns secret values."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "prefix": {
                 "type": "string",
-                "description": "Optional path or phoenix:// prefix; defaults to the profile namespace.",
+                "description": (
+                    "Optional folder: path, path/, path/* or a phoenix:// prefix; "
+                    "defaults to the profile namespace."
+                ),
                 "maxLength": _MAX_ARGUMENT_LENGTH,
             }
         },
@@ -137,13 +143,16 @@ def list_payload(
         config = config_loader()
         caller = caller_from_kwargs(config.profile_name, tool="phoenix_list", kwargs=kwargs)
         result = PhoenixClient(config).list(prefix, caller=caller)
-        paths = result["paths"]
-        return {
+        secrets = result["secrets"]
+        payload: dict[str, Any] = {
             "ok": True,
             "prefix": result["prefix"],
-            "count": len(paths),
-            "paths": paths,
+            "count": len(secrets),
+            "secrets": secrets,
         }
+        if not result["descriptions"]:
+            payload["note"] = "This Phoenix server is too old to return descriptions; paths only."
+        return payload
     except Exception as exc:
         return _failure_payload(exc)
 
