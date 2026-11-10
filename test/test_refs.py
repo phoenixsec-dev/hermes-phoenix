@@ -38,6 +38,11 @@ def test_list_prefix_folder_forms_are_the_same_folder(value):
     assert normalize_list_prefix(value, "services/hermes/example-profile") == "services/hermes/example-profile/calendar/"
 
 
+def test_list_prefix_lone_star_is_the_default_folder():
+    # Same as the CLI, where a lone * lists the top folder.
+    assert normalize_list_prefix("*", "services/hermes/example-profile") == "services/hermes/example-profile/"
+
+
 def test_list_prefix_ref_folder_form():
     assert normalize_list_prefix("phoenix://services/shared/*", "services/hermes/example-profile") == "services/shared/"
 

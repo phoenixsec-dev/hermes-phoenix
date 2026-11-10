@@ -101,8 +101,9 @@ Three tools, each returning JSON strings per the Hermes handler contract:
   material; the safe first tool to enable.
 - **`phoenix_list`** — visible secrets under the profile namespace or a
   given folder, each with its description. Never values. The folder may be
-  written `x/y`, `x/y/` or `x/y/*` (the Phoenix CLI's forms); any other
-  wildcard is refused before a request. It asks `GET /v1/metadata/` and
+  written `x/y`, `x/y/` or `x/y/*` (the Phoenix CLI's forms; a lone `*`
+  is the default folder, as in the CLI); any other wildcard is refused
+  before a request. It asks `GET /v1/metadata/` and
   keeps only `path` and `description`; a server too old for that route
   answers a plain-text 404, and the plugin then lists bare paths from
   `GET /v1/secrets/` with a `note` saying descriptions are unavailable.
