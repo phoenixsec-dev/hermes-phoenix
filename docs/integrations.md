@@ -21,7 +21,7 @@ Transport applies to all three planes identically: Phoenix is LAN-scoped by desi
 Use the plugin package when you want:
 
 - health/connectivity diagnostics through `phoenix_status`, `hermes phoenix status`, and `/phoenix status`
-- visible-path discovery through `phoenix_list` (paths only, never values)
+- visible-path discovery through `phoenix_list` (paths and descriptions, never values)
 - runtime resolution through `phoenix_resolve` — sealed by default wherever a seal key exists, plaintext only for explicitly opted-in profiles
 - Phoenix ACL, role, and attestation policy evaluated on every runtime request
 - sealed responses that keep values out of model-visible tool output and session JSONL

@@ -34,6 +34,12 @@ def normalize_ref(value: str, default_namespace: str | None = None) -> str:
     ref = value.strip()
     if not ref:
         raise ConfigurationError("Phoenix ref is required", code="PHOENIX_REF_REQUIRED")
+    if "*" in ref:
+        # The server answers this hint too, but a `*` never reaches it from here.
+        raise ConfigurationError(
+            "wildcards are not secret names; to list a folder, use phoenix_list",
+            code="PHOENIX_REF_INVALID",
+        )
     if ref.startswith(_REF_PREFIX):
         path = ref[len(_REF_PREFIX) :]
     else:
@@ -54,8 +60,33 @@ def normalize_ref(value: str, default_namespace: str | None = None) -> str:
     return f"{_REF_PREFIX}{'/'.join(segments)}"
 
 
+# Same wording as the Phoenix CLI and MCP server, so agents learn one rule.
+_LIST_WILDCARD_HELP = (
+    "list takes a folder (services/browser, services/browser/ or services/browser/*); "
+    "other wildcards are not supported"
+)
+
+
+def _strip_folder_wildcard(raw_prefix: str) -> str:
+    """Turn the folder forms `x/y`, `x/y/` and `x/y/*` into `x/y/`-style input.
+
+    Mirrors listFolder in the Phoenix CLI: one trailing `*` after a slash is
+    allowed; any other `*`, `?` or `[` is rejected before a request is sent.
+    """
+    folder = raw_prefix.removesuffix("*")
+    stripped = folder != raw_prefix
+    bare = folder.removeprefix(_REF_PREFIX)
+    if any(ch in folder for ch in "*?[") or (stripped and bare and not bare.endswith("/")):
+        raise ConfigurationError(
+            f"{raw_prefix!r}: {_LIST_WILDCARD_HELP}",
+            code="PHOENIX_LIST_WILDCARD",
+            remediation="List the folder instead, for example services/browser/.",
+        )
+    return folder
+
+
 def normalize_list_prefix(value: str | None, default_namespace: str | None = None) -> str:
-    raw_prefix = (value or "").strip()
+    raw_prefix = _strip_folder_wildcard((value or "").strip())
     if raw_prefix.startswith(_REF_PREFIX):
         prefix = raw_prefix[len(_REF_PREFIX) :].strip("/")
         if not prefix:

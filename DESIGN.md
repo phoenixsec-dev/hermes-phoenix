@@ -99,10 +99,16 @@ Three tools, each returning JSON strings per the Hermes handler contract:
 - **`phoenix_status`** — reachability, authenticated preflight of the
   bootstrap identity, seal-key state, auth mode. Never returns secret
   material; the safe first tool to enable.
-- **`phoenix_list`** — visible paths under the profile namespace or a
-  given prefix. Paths only, never values. Responses are validated: paths
-  outside the requested prefix, control characters, or dot segments fail
-  the call.
+- **`phoenix_list`** — visible secrets under the profile namespace or a
+  given folder, each with its description. Never values. The folder may be
+  written `x/y`, `x/y/` or `x/y/*` (the Phoenix CLI's forms; a lone `*`
+  is the default folder, as in the CLI); any other wildcard is refused
+  before a request. It asks `GET /v1/metadata/` and
+  keeps only `path` and `description`; a server too old for that route
+  answers a plain-text 404, and the plugin then lists bare paths from
+  `GET /v1/secrets/` with a `note` saying descriptions are unavailable.
+  Responses are validated: paths outside the requested prefix, control
+  characters, or dot segments fail the call.
 - **`phoenix_resolve`** — resolve up to 50 refs per call. Sealed
   profiles return opaque `PHOENIX_SEALED:` tokens (§5); explicitly
   unsealed profiles return plaintext in the direct result (§6).

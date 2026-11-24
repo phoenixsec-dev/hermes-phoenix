@@ -157,7 +157,7 @@ def verify_profile(config: PluginConfig, raw_hermes_config: Mapping[str, Any]) -
             {
                 "name": "default_namespace_visibility",
                 "ok": True,
-                "visible_path_count": len(listing["paths"]),
+                "visible_path_count": len(listing["secrets"]),
             }
         )
     except Exception as exc:

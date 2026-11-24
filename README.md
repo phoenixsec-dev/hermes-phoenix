@@ -14,7 +14,7 @@ The current foundation includes:
 - strict profile-local configuration parsing
 - bearer-token-file and optional mTLS client foundations
 - `phoenix_status`, warning-only session preflight, `hermes phoenix status`, and `/phoenix status`
-- `phoenix_list` path discovery
+- `phoenix_list` folder listing with each secret's description
 - default-off `phoenix_resolve`, with opaque sealed responses when configured
 - strict X25519 seal-key and envelope validation; the plugin never decrypts
 - process-local value-aware scrubbing for terminal and generic tool results

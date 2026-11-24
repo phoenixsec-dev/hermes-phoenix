@@ -133,18 +133,54 @@ def test_status_treats_non_string_health_status_as_reachable(stub_phoenix, tmp_p
     assert result["health"] == {"status": "reachable"}
 
 
-def test_list_returns_only_paths_under_normalized_prefix(stub_phoenix, tmp_path):
+def test_list_returns_paths_and_descriptions_only(stub_phoenix, tmp_path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     result = client.list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
     assert result == {
         "prefix": "services/hermes/example-main/",
-        "paths": [
-            "services/hermes/example-main/calendar/password",
-            "services/hermes/example-main/storage/token",
+        "descriptions": True,
+        "secrets": [
+            {"path": "services/hermes/example-main/calendar/password", "description": "Calendar login"},
+            {"path": "services/hermes/example-main/storage/token", "description": ""},
         ],
     }
-    request = next(item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/"))
-    assert request["headers"]["X-Hermes-Tool"] == "phoenix_list"
+    assert [item["path"] for item in stub_phoenix.requests] == ["/v1/metadata/services/hermes/example-main/"]
+    assert stub_phoenix.requests[0]["headers"]["X-Hermes-Tool"] == "phoenix_list"
+
+
+def test_list_falls_back_to_bare_paths_on_old_server(stub_phoenix, tmp_path):
+    stub_phoenix.old_server = True
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    result = client.list(caller=CallerContext(profile="example-main"))
+    assert result == {
+        "prefix": "services/hermes/example-main/",
+        "descriptions": False,
+        "secrets": [
+            {"path": "services/hermes/example-main/calendar/password", "description": ""},
+            {"path": "services/hermes/example-main/storage/token", "description": ""},
+        ],
+    }
+    assert [item["path"] for item in stub_phoenix.requests] == [
+        "/v1/metadata/services/hermes/example-main/",
+        "/v1/secrets/services/hermes/example-main/",
+    ]
+
+
+def test_list_does_not_fall_back_on_json_404(stub_phoenix, tmp_path, monkeypatch):
+    # A JSON 404 comes from a handler on a current server, not a missing route.
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    with pytest.raises(ApiError) as caught:
+        client.list("phoenix://services/hermes/other", caller=CallerContext(profile="example-main"))
+    assert caught.value.code == "PHOENIX_HTTP_ERROR"
+    assert not any(item["path"].startswith("/v1/secrets/") for item in stub_phoenix.requests)
+
+
+@pytest.mark.parametrize("prefix", ["calendar", "calendar/", "calendar/*", "phoenix://services/hermes/example-main/calendar/*"])
+def test_list_folder_forms_request_the_same_folder(stub_phoenix, tmp_path, prefix):
+    client = PhoenixClient(_config(stub_phoenix, tmp_path))
+    with pytest.raises(ApiError):
+        client.list(prefix, caller=CallerContext(profile="example-main"))  # stub has no such folder
+    assert stub_phoenix.requests[-1]["path"] == "/v1/metadata/services/hermes/example-main/calendar/"
 
 
 def test_resolve_normalizes_refs_and_hides_server_error_text(stub_phoenix, tmp_path):
@@ -185,27 +221,31 @@ def test_resolve_rejects_response_refs_that_were_not_requested(stub_phoenix, tmp
     assert "must-not-escape" not in str(caught.value)
 
 
-@pytest.mark.parametrize("payload", [{"paths": None}, {}])
-def test_list_treats_null_or_absent_paths_as_empty(stub_phoenix, tmp_path, monkeypatch, payload):
+@pytest.mark.parametrize("payload", [{"secrets": None}, {}])
+def test_list_treats_null_or_absent_secrets_as_empty(stub_phoenix, tmp_path, monkeypatch, payload):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: payload)
     assert client.list(caller=CallerContext(profile="example-main")) == {
         "prefix": "services/hermes/example-main/",
-        "paths": [],
+        "descriptions": True,
+        "secrets": [],
     }
 
 
 def test_list_preserves_legal_server_path_characters(stub_phoenix, tmp_path, monkeypatch):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
     path = "services/hermes/example-main/calendar/2026 summer+east:token"
-    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
-    assert client.list(caller=CallerContext(profile="example-main"))["paths"] == [path]
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"secrets": [{"path": path}]})
+    assert client.list(caller=CallerContext(profile="example-main"))["secrets"] == [{"path": path, "description": ""}]
 
 
-@pytest.mark.parametrize("paths", ["not-a-list", [123]])
-def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths):
+@pytest.mark.parametrize(
+    "secrets",
+    ["not-a-list", [123], [{"path": 123}], [{"path": "services/hermes/example-main/x", "description": 1}]],
+)
+def test_list_rejects_malformed_entries(stub_phoenix, tmp_path, monkeypatch, secrets):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
-    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": paths})
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"secrets": secrets})
     with pytest.raises(ApiError) as caught:
         client.list(caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
@@ -223,7 +263,7 @@ def test_list_rejects_malformed_paths(stub_phoenix, tmp_path, monkeypatch, paths
 )
 def test_list_rejects_path_outside_requested_prefix(stub_phoenix, tmp_path, monkeypatch, path):
     client = PhoenixClient(_config(stub_phoenix, tmp_path))
-    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"paths": [path]})
+    monkeypatch.setattr(client, "_request_json", lambda *_args, **_kwargs: {"secrets": [{"path": path}]})
     with pytest.raises(ApiError) as caught:
         client.list(caller=CallerContext(profile="example-main"))
     assert caught.value.code == "PHOENIX_RESPONSE_INVALID"
@@ -401,7 +441,7 @@ def test_role_session_mints_once_and_reuses_in_memory_token(stub_phoenix, tmp_pa
     PhoenixClient(config).list(caller=CallerContext(profile="example-main", tool="phoenix_list"))
     assert stub_phoenix.session_mint_count == 1
     assert stub_phoenix.session_renew_count == 0
-    list_requests = [item for item in stub_phoenix.requests if item["path"].startswith("/v1/secrets/")]
+    list_requests = [item for item in stub_phoenix.requests if item["path"].startswith("/v1/metadata/")]
     assert [item["headers"]["Authorization"] for item in list_requests] == [
         "Bearer phxs_synthetic-1",
         "Bearer phxs_synthetic-1",
